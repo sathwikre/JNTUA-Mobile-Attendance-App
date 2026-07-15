@@ -1,14 +1,43 @@
 import React from 'react';
-import { View, Text } from 'react-native';
+import { View, Text, StyleSheet } from 'react-native';
+import { useOTAConfig } from '../hooks/useOTAConfig';
+import { T, SP, CARD, COLORS, isSmall } from '../lib/tokens';
 
 export default function QuickTip() {
+  const { config } = useOTAConfig();
+  const { thresholds, showQuickTip, quickTipText } = config;
+  if (!showQuickTip) return null;
+
+  const defaultTip = `The ${thresholds.minimum}% rule: for every 3 classes missed, you need 9 more to compensate. Green = above ${thresholds.safe}% (safe). Amber = ${thresholds.minimum}-${thresholds.safe}% (caution). Red = below ${thresholds.minimum}% (critical).`;
+  const tipText = quickTipText || defaultTip;
+
   return (
-    <View className="mx-4 my-2 p-3 bg-green-50 rounded-xl border border-green-200">
-      <Text className="text-green-800 text-sm font-bold">💡 Quick Tip</Text>
-      <Text className="text-green-700 text-xs leading-5">
-        The 75% rule means for every 3 classes you miss, you need to attend 9 more to compensate. 
-        Green bars are above 77% (safe zone), amber at 75–77% (at risk), and red means immediate action needed.
-      </Text>
+    <View style={s.wrap}>
+      <View style={s.iconBox}>
+        <Text style={s.iconLetter}>i</Text>
+      </View>
+      <View style={s.textWrap}>
+        <Text style={s.title}>Quick Tip</Text>
+        <Text style={s.body}>{tipText}</Text>
+      </View>
     </View>
   );
 }
+
+const s = StyleSheet.create({
+  wrap: {
+    marginHorizontal: CARD.marginH, marginVertical: SP.sm,
+    padding: CARD.padding, backgroundColor: COLORS.greenBg,
+    borderRadius: CARD.radius, borderWidth: 1, borderColor: COLORS.greenBorder,
+    flexDirection: 'row', alignItems: 'flex-start',
+  },
+  iconBox: {
+    width: 24, height: 24, borderRadius: 12,
+    backgroundColor: '#DCFCE7', alignItems: 'center', justifyContent: 'center',
+    marginRight: SP.md, marginTop: 1,
+  },
+  iconLetter: { fontSize: 13, fontWeight: '900', color: COLORS.greenDark },
+  textWrap: { flex: 1 },
+  title: { ...T.caption, color: '#166534', fontWeight: '800', marginBottom: 2 },
+  body: { ...T.caption, color: '#15803D', lineHeight: isSmall ? 17 : 19 },
+});
