@@ -1,7 +1,7 @@
-import React from 'react';
-import { TextInput, View, StyleSheet } from 'react-native';
 import { Search } from 'lucide-react-native';
-import { T, SP, CARD, COLORS, isSmall } from '../lib/tokens';
+import React from 'react';
+import { StyleSheet, TextInput, View } from 'react-native';
+import { CARD, COLORS, isSmall } from '../lib/tokens';
 
 interface Props { value: string; onChangeText: (text: string) => void; placeholder?: string; }
 
@@ -22,12 +22,12 @@ export default function SearchBar({ value, onChangeText, placeholder = 'Search s
   );
 }
 
-import { TouchableOpacity, Text } from 'react-native';
+import { Text, TouchableOpacity } from 'react-native';
 
 const s = StyleSheet.create({
-  wrap: { paddingHorizontal: CARD.marginH, marginBottom: SP.md },
-  box: { flexDirection: 'row', alignItems: 'center', borderRadius: CARD.radius, borderWidth: 1, borderColor: COLORS.borderLight, backgroundColor: COLORS.white, paddingHorizontal: SP.xl, paddingVertical: isSmall ? SP.md : SP.lg, elevation: 1 },
-  input: { flex: 1, paddingHorizontal: SP.md, ...T.body, color: COLORS.text },
+  wrap: { paddingHorizontal: isSmall ? 12 : 16, marginBottom: isSmall ? 12 : 16 },
+  box: { flexDirection: 'row', alignItems: 'center', borderRadius: CARD.radius, borderWidth: 1, borderColor: COLORS.borderLight, backgroundColor: COLORS.white, paddingHorizontal: isSmall ? 10 : 12, paddingVertical: isSmall ? 6 : 8, elevation: 1 },
+  input: { flex: 1, paddingHorizontal: isSmall ? 6 : 8, fontSize: isSmall ? 12 : 14, color: COLORS.text },
   clearBtn: { width: 22, height: 22, borderRadius: 11, backgroundColor: COLORS.surface, alignItems: 'center', justifyContent: 'center' },
   clearText: { fontSize: 10, color: COLORS.textMut, fontWeight: '700' },
 });
