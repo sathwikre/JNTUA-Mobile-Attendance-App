@@ -1,6 +1,5 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { useOTAConfig } from '../hooks/useOTAConfig';
 import { COLORS, isSmall } from '../lib/tokens';
 
 interface Props {
@@ -11,8 +10,6 @@ interface Props {
 }
 
 export default function StatsHeader({ totalSubjects, avgPercent, totalPresent, totalDays }: Props) {
-  const { config } = useOTAConfig();
-  const { thresholds, colors } = config;
 
   const percentColor = avgPercent >= 75 ? '#059669' : '#DC2626';
 

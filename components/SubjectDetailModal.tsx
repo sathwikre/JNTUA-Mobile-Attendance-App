@@ -1,13 +1,9 @@
 import React from 'react';
 import { FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { useOTAConfig } from '../hooks/useOTAConfig';
 import { CARD, COLORS, isSmall } from '../lib/tokens';
 
 interface Props { visible: boolean; onClose: () => void; subject: string; code: string; percentage: number; present: number; absent: number; total: number; records: { date: string; status: string }[]; }
 export default function SubjectDetailModal({ visible, onClose, subject, code, percentage, present, absent, total, records }: Props) {
-  const { config } = useOTAConfig();
-  const color = percentage >= config.thresholds.safe ? config.colors.safe : percentage >= config.thresholds.minimum ? config.colors.caution : percentage >= config.thresholds.warning ? config.colors.risk : config.colors.danger;
-  
   return (
     <Modal visible={visible} animationType="fade" transparent onRequestClose={onClose}>
       <View style={s.overlay}>

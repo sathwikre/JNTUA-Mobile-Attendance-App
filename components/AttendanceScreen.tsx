@@ -13,7 +13,7 @@ import SubjectDetailModal from './SubjectDetailModal';
 interface SubjectItem {
   subject: string; code: string; total: number; present: number;
   absent: number; percentage: number;
-  records: Array<{ date: string; status: string }>; error?: string;
+  records: { date: string; status: string }[]; error?: string;
 }
 
 interface AttendanceScreenProps {

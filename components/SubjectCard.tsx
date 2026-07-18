@@ -11,14 +11,14 @@ interface Props {
 
 export default function SubjectCard({ subject, code, total, present, absent, percentage, startDate, endDate, onPress }: Props) {
   const { config } = useOTAConfig();
-  const { thresholds, colors, labels } = config;
+  const { thresholds, colors } = config;
 
   let zone: 'safe' | 'caution' | 'risk' | 'danger' = 'danger';
   if (percentage >= thresholds.safe) zone = 'safe';
   else if (percentage >= thresholds.minimum) zone = 'caution';
   else if (percentage >= thresholds.warning) zone = 'risk';
 
-  const pc = colors[zone];
+  const pc = colors[zone === 'risk' ? 'warning' : zone];
   const barColor = zone === 'safe' ? '#059669' : zone === 'caution' ? '#D97706' : zone === 'risk' ? '#D97706' : '#DC2626';
   const pillGreen = '#F0FDF4';
   const pillGreenBorder = '#BBF7D0';

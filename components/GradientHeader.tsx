@@ -1,12 +1,10 @@
 import React from 'react';
 import { StyleSheet, Text, View } from 'react-native';
-import { useOTAConfig } from '../hooks/useOTAConfig';
 import { COLORS, isSmall } from '../lib/tokens';
 
 interface Props { name: string; studentId: string; semester: string; }
 
 export default function GradientHeader({ name, studentId, semester }: Props) {
-  const { config } = useOTAConfig();
   const initial = name.charAt(0).toUpperCase();
 
   return (
