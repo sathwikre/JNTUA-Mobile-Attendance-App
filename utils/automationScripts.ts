@@ -15,7 +15,7 @@ export interface StudentInfo {
 export interface AttendanceRecord {
   date: string;
   time: string;
-  status: 'Present' | 'Absent';
+  status: 'Present' | 'Absent' | 'Unknown';
 }
 
 export interface SubjectAttendanceData {

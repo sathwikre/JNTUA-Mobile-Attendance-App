@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
   ActivityIndicator,
   FlatList,
@@ -18,85 +18,180 @@ import {
   SubjectAttendanceData,
 } from "../utils/automationScripts";
 
+const COLORS = {
+  primary: "#6366F1",
+  primaryLight: "#EEF2FF",
+  success: "#10B981",
+  successDark: "#059669",
+  danger: "#EF4444",
+  dangerDark: "#DC2626",
+  ink: "#0F172A",
+  slate: "#64748B",
+  slateLight: "#94A3B8",
+  white: "#FFFFFF",
+  bg: "#F8FAFC",
+  border: "#E2E8F0",
+  trackBg: "#F1F5F9",
+  chipSafeBg: "#ECFDF5",
+  chipDangerBg: "#FEF2F2",
+  dangerSoftBg: "#FEF2F2",
+  dangerSoftBorder: "#FECDD3",
+  profileBg: "#334155",
+  avatarBg: "#475569",
+  profileBorder: "#475569",
+  overlay: "rgba(15, 23, 42, 0.6)",
+};
+
+interface AppState {
+  webViewKey: number;
+  isLoggedIn: boolean;
+  studentInfo: StudentInfo | null;
+  currentIndex: number;
+  totalSubjects: number | null;
+  fetchedIndices: number[];
+  subjectsData: SubjectAttendanceData[];
+  isScrapingFinished: boolean;
+  selectedSubject: SubjectAttendanceData | null;
+}
+
+const initialState: AppState = {
+  webViewKey: 0,
+  isLoggedIn: false,
+  studentInfo: null,
+  currentIndex: 0,
+  totalSubjects: null,
+  fetchedIndices: [],
+  subjectsData: [],
+  isScrapingFinished: false,
+  selectedSubject: null,
+};
+
+type AppAction =
+  | { type: "RESET" }
+  | { type: "SET_LOGGED_IN" }
+  | { type: "SET_STUDENT_INFO"; data: StudentInfo }
+  | { type: "SET_SUBJECT_COUNT"; count: number }
+  | { type: "ADD_ATTENDANCE_ITEM"; data: SubjectAttendanceData }
+  | { type: "SET_SCRAPING_FINISHED" }
+  | { type: "SET_SELECTED_SUBJECT"; data: SubjectAttendanceData | null };
+
+function appReducer(state: AppState, action: AppAction): AppState {
+  switch (action.type) {
+    case "RESET":
+      return { ...initialState, webViewKey: state.webViewKey + 1 };
+    case "SET_LOGGED_IN":
+      return { ...state, isLoggedIn: true };
+    case "SET_STUDENT_INFO":
+      return { ...state, studentInfo: action.data };
+    case "SET_SUBJECT_COUNT":
+      return { ...state, totalSubjects: action.count };
+    case "ADD_ATTENDANCE_ITEM": {
+      if (state.fetchedIndices.includes(state.currentIndex)) {
+        return state;
+      }
+      const nextIndex = state.currentIndex + 1;
+      const finished =
+        state.totalSubjects !== null && nextIndex >= state.totalSubjects;
+      return {
+        ...state,
+        fetchedIndices: [...state.fetchedIndices, state.currentIndex],
+        subjectsData: [...state.subjectsData, action.data],
+        currentIndex: finished ? state.currentIndex : nextIndex,
+        isScrapingFinished: finished ? true : state.isScrapingFinished,
+      };
+    }
+    case "SET_SCRAPING_FINISHED":
+      return { ...state, isScrapingFinished: true };
+    case "SET_SELECTED_SUBJECT":
+      return { ...state, selectedSubject: action.data };
+    default:
+      return state;
+  }
+}
+
+type MessagePayload =
+  | { type: "STUDENT_INFO"; data: StudentInfo }
+  | { type: "SUBJECT_COUNT"; count: number }
+  | { type: "ATTENDANCE_ITEM"; data: SubjectAttendanceData }
+  | { type: "SCRAPING_COMPLETE" };
+
 export default function Index() {
   const webViewRef = useRef<WebViewType>(null);
+  const [state, dispatch] = useReducer(appReducer, initialState);
 
-  // WebView Instance Key for hard resets
-  const [webViewKey, setWebViewKey] = useState<number>(0);
+  const {
+    webViewKey,
+    isLoggedIn,
+    studentInfo,
+    totalSubjects,
+    fetchedIndices,
+    subjectsData,
+    isScrapingFinished,
+    selectedSubject,
+  } = state;
 
-  // Core App States
-  const [isLoggedIn, setIsLoggedIn] = useState<boolean>(false);
-  const [studentInfo, setStudentInfo] = useState<StudentInfo | null>(null);
-  const [currentIndex, setCurrentIndex] = useState<number>(0);
-  const [totalSubjects, setTotalSubjects] = useState<number | null>(null);
-  const [fetchedIndices, setFetchedIndices] = useState<number[]>([]);
-  const [subjectsData, setSubjectsData] = useState<SubjectAttendanceData[]>([]);
-  const [isScrapingFinished, setIsScrapingFinished] = useState<boolean>(false);
+  const stateRef = useRef(state);
+  useEffect(() => {
+    stateRef.current = state;
+  });
 
-  // Modal State
-  const [selectedSubject, setSelectedSubject] = useState<SubjectAttendanceData | null>(null);
+  const handleFullReset = useCallback(() => {
+    dispatch({ type: "RESET" });
+  }, []);
 
-  // Reset all state and destroy/re-mount WebView at the root URL
-  const handleFullReset = () => {
-    setIsLoggedIn(false);
-    setStudentInfo(null);
-    setCurrentIndex(0);
-    setTotalSubjects(null);
-    setFetchedIndices([]);
-    setSubjectsData([]);
-    setIsScrapingFinished(false);
-    setSelectedSubject(null);
-    setWebViewKey((prev) => prev + 1); // Forces webview to remount from root URL
-  };
+  const handleNavigationStateChange = useCallback(
+    (navState: WebViewNavigation) => {
+      const { url, loading } = navState;
+      const {
+        isLoggedIn: loggedIn,
+        isScrapingFinished: scrapingFinished,
+        currentIndex,
+      } = stateRef.current;
 
-  const handleNavigationStateChange = (navState: WebViewNavigation) => {
-    const { url, loading } = navState;
-
-    if (url.includes("studenthome.php")) {
-      if (!isLoggedIn) setIsLoggedIn(true);
-      if (!loading && !isScrapingFinished) {
-        webViewRef.current?.injectJavaScript(autoSubmitFirstSemesterScript);
-      }
-    } else if (url.includes("studentsubjects.php")) {
-      if (!loading && !isScrapingFinished) {
-        webViewRef.current?.injectJavaScript(selectSubjectByIndexScript(currentIndex));
-      }
-    } else if (url.includes("studentsubatt.php")) {
-      if (!loading && !isScrapingFinished) {
-        webViewRef.current?.injectJavaScript(parseDetailedAttendanceAndGoHomeScript);
-      }
-    }
-  };
-
-  const handleMessage = (event: WebViewMessageEvent) => {
-    try {
-      const payload = JSON.parse(event.nativeEvent.data);
-
-      if (payload.type === "STUDENT_INFO") {
-        setStudentInfo(payload.data);
-      } else if (payload.type === "SUBJECT_COUNT") {
-        setTotalSubjects(payload.count);
-      } else if (payload.type === "ATTENDANCE_ITEM") {
-        const newItem: SubjectAttendanceData = payload.data;
-
-        if (!fetchedIndices.includes(currentIndex)) {
-          setFetchedIndices((prev) => [...prev, currentIndex]);
-          setSubjectsData((prev) => [...prev, newItem]);
-
-          const nextIndex = currentIndex + 1;
-          if (totalSubjects !== null && nextIndex >= totalSubjects) {
-            setIsScrapingFinished(true);
-          } else {
-            setCurrentIndex(nextIndex);
-          }
+      if (url.includes("studenthome.php")) {
+        if (!loggedIn) dispatch({ type: "SET_LOGGED_IN" });
+        if (!loading && !scrapingFinished) {
+          webViewRef.current?.injectJavaScript(autoSubmitFirstSemesterScript);
         }
-      } else if (payload.type === "SCRAPING_COMPLETE") {
-        setIsScrapingFinished(true);
+      } else if (url.includes("studentsubjects.php")) {
+        if (!loading && !scrapingFinished) {
+          webViewRef.current?.injectJavaScript(
+            selectSubjectByIndexScript(currentIndex)
+          );
+        }
+      } else if (url.includes("studentsubatt.php")) {
+        if (!loading && !scrapingFinished) {
+          webViewRef.current?.injectJavaScript(
+            parseDetailedAttendanceAndGoHomeScript
+          );
+        }
+      }
+    },
+    []
+  );
+
+  const handleMessage = useCallback((event: WebViewMessageEvent) => {
+    try {
+      const payload = JSON.parse(event.nativeEvent.data) as MessagePayload;
+
+      switch (payload.type) {
+        case "STUDENT_INFO":
+          dispatch({ type: "SET_STUDENT_INFO", data: payload.data });
+          break;
+        case "SUBJECT_COUNT":
+          dispatch({ type: "SET_SUBJECT_COUNT", count: payload.count });
+          break;
+        case "ATTENDANCE_ITEM":
+          dispatch({ type: "ADD_ATTENDANCE_ITEM", data: payload.data });
+          break;
+        case "SCRAPING_COMPLETE":
+          dispatch({ type: "SET_SCRAPING_FINISHED" });
+          break;
       }
     } catch (err) {
-      console.log("WebView Message Error:", err);
+      console.warn("WebView Message Error:", err);
     }
-  };
+  }, []);
 
   // Aggregation Math
   const overallClasses = subjectsData.reduce((sum, s) => sum + s.total, 0);
@@ -105,10 +200,25 @@ export default function Index() {
   const overallPercentageVal =
     overallClasses > 0 ? (overallPresent / overallClasses) * 100 : 0;
   const overallPercentage = overallPercentageVal.toFixed(1);
+  const isShortage = overallPercentageVal < 75;
+
+  // Maximum skippable classes across all combined subjects
+  const maxOverallSkippable = Math.max(
+    0,
+    Math.floor((4 * overallPresent - 3 * overallClasses) / 3)
+  );
+
+  // Dual-constraint class skipping logic
+  const calculateCanSkip = (subjectPresent: number, subjectTotal: number): number => {
+    const subjectSkippable = Math.max(
+      0,
+      Math.floor((4 * subjectPresent - 3 * subjectTotal) / 3)
+    );
+    return Math.min(subjectSkippable, maxOverallSkippable);
+  };
 
   return (
     <View style={styles.container}>
-      {/* Active WebView Component (Visible during login, hidden during dashboard display) */}
       <View style={!isLoggedIn ? styles.fullWebView : styles.hiddenWebView}>
         <WebView
           key={webViewKey}
@@ -126,24 +236,19 @@ export default function Index() {
       {isLoggedIn && !isScrapingFinished && (
         <View style={styles.loadingContainer}>
           <View style={styles.loadingCard}>
-            <ActivityIndicator size="large" color="#6366F1" />
+            <ActivityIndicator size="large" color={COLORS.primary} />
             <Text style={styles.loadingTitle}>Syncing Attendance</Text>
             <Text style={styles.loadingSubtext}>
               {totalSubjects
                 ? `Processed ${fetchedIndices.length} of ${totalSubjects} subjects`
                 : "Authenticating session..."}
             </Text>
-            <View style={styles.progressTrack}>
-              <View
-                style={[
-                  styles.progressBarFill,
-                  {
-                    width: totalSubjects
-                      ? `${(fetchedIndices.length / totalSubjects) * 100}%`
-                      : "10%",
-                  },
-                ]}
-              />
+            <View style={styles.loaderBadge}>
+              <Text style={styles.loaderBadgeText}>
+                {totalSubjects
+                  ? `${Math.round((fetchedIndices.length / totalSubjects) * 100)}% Complete`
+                  : "Connecting..."}
+              </Text>
             </View>
           </View>
         </View>
@@ -156,10 +261,10 @@ export default function Index() {
           <View style={styles.topBar}>
             <View>
               <Text style={styles.brandTitle}>Attendance Tracker</Text>
-              <Text style={styles.brandSub}>Academic Portal Sync</Text>
+              <Text style={styles.brandSub}>by chanikya</Text>
             </View>
             <TouchableOpacity style={styles.resetBtn} onPress={handleFullReset}>
-              <Text style={styles.resetBtnText}>Reset App</Text>
+              <Text style={styles.resetBtnText}>Back</Text>
             </TouchableOpacity>
           </View>
 
@@ -184,45 +289,44 @@ export default function Index() {
           <View
             style={[
               styles.overallCard,
-              overallPercentageVal < 75 ? styles.overallDangerBg : styles.overallSafeBg,
+              isShortage ? styles.overallDangerBg : styles.overallSafeBg,
             ]}
           >
             <View style={styles.overallHeaderRow}>
-              <Text style={styles.overallCardTitle}>Overall Percentage</Text>
+              <Text style={styles.overallCardTitle}>Overall Status</Text>
               <View
                 style={[
                   styles.statusChip,
-                  overallPercentageVal < 75 ? styles.chipDanger : styles.chipSafe,
+                  isShortage ? styles.chipDanger : styles.chipSafe,
                 ]}
               >
                 <Text
                   style={[
                     styles.statusChipText,
-                    overallPercentageVal < 75
-                      ? styles.chipDangerText
-                      : styles.chipSafeText,
+                    isShortage ? styles.chipDangerText : styles.chipSafeText,
                   ]}
                 >
-                  {overallPercentageVal < 75 ? "Shortage Warning" : "Good Standing"}
+                  {isShortage ? "Shortage Warning" : "Good Standing"}
                 </Text>
               </View>
             </View>
 
             <View style={styles.overallMainStatRow}>
               <Text style={styles.overallScoreText}>{overallPercentage}%</Text>
+
               <View style={styles.overallMiniGrid}>
                 <View style={styles.miniGridBox}>
                   <Text style={styles.miniGridNum}>{overallClasses}</Text>
                   <Text style={styles.miniGridLabel}>Total</Text>
                 </View>
                 <View style={styles.miniGridBox}>
-                  <Text style={[styles.miniGridNum, { color: "#10B981" }]}>
+                  <Text style={[styles.miniGridNum, { color: COLORS.success }]}>
                     {overallPresent}
                   </Text>
                   <Text style={styles.miniGridLabel}>Attended</Text>
                 </View>
                 <View style={styles.miniGridBox}>
-                  <Text style={[styles.miniGridNum, { color: "#EF4444" }]}>
+                  <Text style={[styles.miniGridNum, { color: COLORS.danger }]}>
                     {overallAbsent}
                   </Text>
                   <Text style={styles.miniGridLabel}>Missed</Text>
@@ -230,16 +334,26 @@ export default function Index() {
               </View>
             </View>
 
-            <View style={styles.overallTrack}>
+            {/* Overall Capacity Banner */}
+            <View style={styles.skipAllowanceBanner}>
+              <Text style={styles.skipAllowanceLabel}>Overall Skip Capacity:</Text>
               <View
                 style={[
-                  styles.overallTrackFill,
-                  {
-                    width: `${Math.min(overallPercentageVal, 100)}%`,
-                    backgroundColor: overallPercentageVal < 75 ? "#EF4444" : "#10B981",
-                  },
+                  styles.skipPill,
+                  maxOverallSkippable > 0 ? styles.skipPillSafe : styles.skipPillMuted,
                 ]}
-              />
+              >
+                <Text
+                  style={[
+                    styles.skipPillText,
+                    maxOverallSkippable > 0
+                      ? styles.skipPillTextSafe
+                      : styles.skipPillTextMuted,
+                  ]}
+                >
+                  can skip : {maxOverallSkippable}
+                </Text>
+              </View>
             </View>
           </View>
 
@@ -252,56 +366,67 @@ export default function Index() {
             renderItem={({ item }) => {
               const pVal = parseFloat(item.percentage);
               const isLow = pVal < 75;
+              const canSkip = calculateCanSkip(item.present, item.total);
 
               return (
                 <TouchableOpacity
                   activeOpacity={0.8}
-                  style={styles.modernSubjectCard}
-                  onPress={() => setSelectedSubject(item)}
+                  style={[
+                    styles.modernSubjectCard,
+                    isLow ? styles.cardLowBg : styles.cardNormalBg,
+                  ]}
+                  onPress={() => dispatch({ type: "SET_SELECTED_SUBJECT", data: item })}
                 >
                   <View style={styles.cardHeaderLine}>
                     <Text style={styles.subjectTitle} numberOfLines={2}>
                       {item.subjectName}
                     </Text>
+
+                    <Text
+                      style={[
+                        styles.percentageText,
+                        isLow ? styles.badgeDangerText : styles.badgeSafeText,
+                      ]}
+                    >
+                      {item.percentage}%
+                    </Text>
+                  </View>
+
+                  {/* Stat Pills & Can Skip Indicator */}
+                  <View style={styles.cardFooterStats}>
+                    <View style={styles.statPillsContainer}>
+                      <View style={styles.miniStatPill}>
+                        <Text style={styles.miniStatPillLabel}>
+                          Tot: <Text style={styles.boldDark}>{item.total}</Text>
+                        </Text>
+                      </View>
+                      <View style={styles.miniStatPill}>
+                        <Text style={styles.miniStatPillLabel}>
+                          Att: <Text style={styles.footerPresentText}>{item.present}</Text>
+                        </Text>
+                      </View>
+                      <View style={styles.miniStatPill}>
+                        <Text style={styles.miniStatPillLabel}>
+                          Abs: <Text style={styles.footerAbsentText}>{item.absent}</Text>
+                        </Text>
+                      </View>
+                    </View>
+
                     <View
                       style={[
-                        styles.percentBadge,
-                        isLow ? styles.badgeDangerBg : styles.badgeSafeBg,
+                        styles.canSkipTag,
+                        canSkip > 0 ? styles.canSkipSafe : styles.canSkipMuted,
                       ]}
                     >
                       <Text
                         style={[
-                          styles.percentBadgeText,
-                          isLow ? styles.badgeDangerText : styles.badgeSafeText,
+                          styles.canSkipText,
+                          canSkip > 0 ? styles.canSkipSafeText : styles.canSkipMutedText,
                         ]}
                       >
-                        {item.percentage}%
+                        can skip : {canSkip}
                       </Text>
                     </View>
-                  </View>
-
-                  <View style={styles.subjectTrack}>
-                    <View
-                      style={[
-                        styles.subjectTrackFill,
-                        {
-                          width: `${Math.min(pVal, 100)}%`,
-                          backgroundColor: isLow ? "#EF4444" : "#10B981",
-                        },
-                      ]}
-                    />
-                  </View>
-
-                  <View style={styles.cardFooterStats}>
-                    <Text style={styles.footerStatText}>
-                      Classes: <Text style={styles.boldDark}>{item.total}</Text>
-                    </Text>
-                    <Text style={styles.footerStatText}>
-                      Present: <Text style={{ color: "#10B981", fontWeight: "700" }}>{item.present}</Text>
-                    </Text>
-                    <Text style={styles.footerStatText}>
-                      Absent: <Text style={{ color: "#EF4444", fontWeight: "700" }}>{item.absent}</Text>
-                    </Text>
                   </View>
                 </TouchableOpacity>
               );
@@ -315,14 +440,14 @@ export default function Index() {
         visible={!!selectedSubject}
         animationType="fade"
         transparent={true}
-        onRequestClose={() => setSelectedSubject(null)}
+        onRequestClose={() => dispatch({ type: "SET_SELECTED_SUBJECT", data: null })}
       >
         <View style={styles.modalBackdrop}>
           <View style={styles.modalSheet}>
             {selectedSubject && (
               <>
                 <View style={styles.modalHeader}>
-                  <View style={{ flex: 1, marginRight: 10 }}>
+                  <View style={styles.modalTitleContainer}>
                     <Text style={styles.modalSubjectTitle}>
                       {selectedSubject.subjectName}
                     </Text>
@@ -330,7 +455,7 @@ export default function Index() {
                   </View>
                   <TouchableOpacity
                     style={styles.modalCloseIcon}
-                    onPress={() => setSelectedSubject(null)}
+                    onPress={() => dispatch({ type: "SET_SELECTED_SUBJECT", data: null })}
                   >
                     <Text style={styles.closeIconText}>✕</Text>
                   </TouchableOpacity>
@@ -351,7 +476,9 @@ export default function Index() {
                           styles.logBadge,
                           item.status === "Present"
                             ? styles.logBadgePresent
-                            : styles.logBadgeAbsent,
+                            : item.status === "Absent"
+                              ? styles.logBadgeAbsent
+                              : styles.logBadgeUnknown,
                         ]}
                       >
                         <Text
@@ -359,7 +486,9 @@ export default function Index() {
                             styles.logBadgeText,
                             item.status === "Present"
                               ? styles.logTextPresent
-                              : styles.logTextAbsent,
+                              : item.status === "Absent"
+                                ? styles.logTextAbsent
+                                : styles.logTextUnknown,
                           ]}
                         >
                           {item.status}
@@ -378,7 +507,7 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: "#F8FAFC", paddingTop: 40 },
+  container: { flex: 1, backgroundColor: COLORS.bg, paddingTop: 40 },
   hiddenWebView: { width: 0, height: 0, overflow: "hidden" },
   fullWebView: { flex: 1 },
 
@@ -386,24 +515,23 @@ const styles = StyleSheet.create({
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
   loadingCard: {
     width: "100%",
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.white,
     padding: 28,
     borderRadius: 20,
     alignItems: "center",
     elevation: 3,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
+    borderColor: COLORS.border,
   },
-  loadingTitle: { fontSize: 18, fontWeight: "700", color: "#0F172A", marginTop: 16 },
-  loadingSubtext: { fontSize: 13, color: "#64748B", marginTop: 6, marginBottom: 20 },
-  progressTrack: {
-    width: "100%",
-    height: 6,
-    backgroundColor: "#F1F5F9",
-    borderRadius: 3,
-    overflow: "hidden",
+  loadingTitle: { fontSize: 18, fontWeight: "700", color: COLORS.ink, marginTop: 16 },
+  loadingSubtext: { fontSize: 13, color: COLORS.slate, marginTop: 6, marginBottom: 16 },
+  loaderBadge: {
+    backgroundColor: COLORS.primaryLight,
+    paddingHorizontal: 14,
+    paddingVertical: 6,
+    borderRadius: 12,
   },
-  progressBarFill: { height: "100%", backgroundColor: "#6366F1", borderRadius: 3 },
+  loaderBadgeText: { fontSize: 12, fontWeight: "700", color: COLORS.primary },
 
   /* Dashboard */
   dashboardContainer: { flex: 1, paddingHorizontal: 20 },
@@ -413,40 +541,42 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
   },
-  brandTitle: { fontSize: 20, fontWeight: "800", color: "#0F172A" },
-  brandSub: { fontSize: 12, color: "#64748B", marginTop: 2 },
+  brandTitle: { fontSize: 20, fontWeight: "800", color: COLORS.ink },
+  brandSub: { fontSize: 12, color: COLORS.slate, marginTop: 2, fontWeight: "600" },
   resetBtn: {
-    backgroundColor: "#FEF2F2",
-    paddingHorizontal: 14,
+    backgroundColor: COLORS.chipDangerBg,
+    paddingHorizontal: 16,
     paddingVertical: 8,
     borderRadius: 10,
     borderWidth: 1,
-    borderColor: "#FECDD3",
+    borderColor: COLORS.dangerSoftBorder,
   },
-  resetBtnText: { color: "#DC2626", fontWeight: "700", fontSize: 12 },
+  resetBtnText: { color: COLORS.dangerDark, fontWeight: "700", fontSize: 12 },
 
-  /* Student Card */
+  /* Student Profile Card */
   profileHero: {
-    backgroundColor: "#0F172A",
+    backgroundColor: COLORS.profileBg,
     borderRadius: 16,
     padding: 16,
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 16,
+    borderWidth: 1,
+    borderColor: COLORS.profileBorder,
   },
   avatarCircle: {
     width: 44,
     height: 44,
     borderRadius: 22,
-    backgroundColor: "#6366F1",
+    backgroundColor: COLORS.avatarBg,
     justifyContent: "center",
     alignItems: "center",
     marginRight: 14,
   },
-  avatarText: { color: "#FFFFFF", fontWeight: "800", fontSize: 18 },
+  avatarText: { color: COLORS.white, fontWeight: "800", fontSize: 18 },
   profileTextContainer: { flex: 1 },
-  studentNameText: { color: "#FFFFFF", fontWeight: "700", fontSize: 16 },
-  studentMetaText: { color: "#94A3B8", fontSize: 12, marginTop: 2 },
+  studentNameText: { color: COLORS.white, fontWeight: "700", fontSize: 16 },
+  studentMetaText: { color: "#CBD5E1", fontSize: 12, marginTop: 2 },
 
   /* Overall Summary Card */
   overallCard: {
@@ -456,81 +586,110 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     elevation: 1,
   },
-  overallSafeBg: { backgroundColor: "#FFFFFF", borderColor: "#E2E8F0" },
-  overallDangerBg: { backgroundColor: "#FFF5F5", borderColor: "#FECDD3" },
+  overallSafeBg: { backgroundColor: COLORS.white, borderColor: COLORS.border },
+  overallDangerBg: { backgroundColor: COLORS.dangerSoftBg, borderColor: COLORS.dangerSoftBorder },
   overallHeaderRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
   },
-  overallCardTitle: { fontSize: 13, fontWeight: "600", color: "#64748B" },
+  overallCardTitle: { fontSize: 13, fontWeight: "600", color: COLORS.slate },
   statusChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-  chipSafe: { backgroundColor: "#ECFDF5" },
-  chipDanger: { backgroundColor: "#FEF2F2" },
+  chipSafe: { backgroundColor: COLORS.chipSafeBg },
+  chipDanger: { backgroundColor: COLORS.chipDangerBg },
   statusChipText: { fontSize: 11, fontWeight: "700" },
-  chipSafeText: { color: "#059669" },
-  chipDangerText: { color: "#DC2626" },
+  chipSafeText: { color: COLORS.successDark },
+  chipDangerText: { color: COLORS.dangerDark },
   overallMainStatRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     marginVertical: 14,
   },
-  overallScoreText: { fontSize: 32, fontWeight: "800", color: "#0F172A" },
+  overallScoreText: { fontSize: 32, fontWeight: "800", color: COLORS.ink },
   overallMiniGrid: { flexDirection: "row", gap: 14 },
   miniGridBox: { alignItems: "center" },
-  miniGridNum: { fontSize: 15, fontWeight: "700", color: "#0F172A" },
-  miniGridLabel: { fontSize: 11, color: "#64748B", marginTop: 2 },
-  overallTrack: {
-    height: 8,
-    backgroundColor: "#E2E8F0",
-    borderRadius: 4,
-    overflow: "hidden",
+  miniGridNum: { fontSize: 15, fontWeight: "700", color: COLORS.ink },
+  miniGridLabel: { fontSize: 11, color: COLORS.slate, marginTop: 2 },
+  skipAllowanceBanner: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: COLORS.border,
   },
-  overallTrackFill: { height: "100%", borderRadius: 4 },
+  skipAllowanceLabel: { fontSize: 12, fontWeight: "600", color: COLORS.slate },
+  skipPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
+  skipPillSafe: { backgroundColor: COLORS.chipSafeBg },
+  skipPillMuted: { backgroundColor: COLORS.trackBg },
+  skipPillText: { fontSize: 11, fontWeight: "800" },
+  skipPillTextSafe: { color: COLORS.successDark },
+  skipPillTextMuted: { color: COLORS.slate },
 
   /* Subject Card */
   modernSubjectCard: {
-    backgroundColor: "#FFFFFF",
     borderRadius: 16,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: "#E2E8F0",
     elevation: 1,
+  },
+  cardNormalBg: {
+    backgroundColor: COLORS.white,
+    borderColor: COLORS.border,
+  },
+  cardLowBg: {
+    backgroundColor: COLORS.dangerSoftBg,
+    borderColor: COLORS.dangerSoftBorder,
   },
   cardHeaderLine: {
     flexDirection: "row",
     justifyContent: "space-between",
-    alignItems: "flex-start",
+    alignItems: "center",
+    marginBottom: 12,
   },
-  subjectTitle: { flex: 1, fontSize: 15, fontWeight: "700", color: "#0F172A", marginRight: 10 },
-  percentBadge: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  badgeSafeBg: { backgroundColor: "#ECFDF5" },
-  badgeDangerBg: { backgroundColor: "#FEF2F2" },
-  percentBadgeText: { fontSize: 13, fontWeight: "800" },
-  badgeSafeText: { color: "#059669" },
-  badgeDangerText: { color: "#DC2626" },
-  subjectTrack: {
-    height: 6,
-    backgroundColor: "#F1F5F9",
-    borderRadius: 3,
-    marginVertical: 12,
-    overflow: "hidden",
+  subjectTitle: { flex: 1, fontSize: 15, fontWeight: "700", color: COLORS.ink, marginRight: 10 },
+  percentageText: { fontSize: 18, fontWeight: "800" },
+  badgeSafeText: { color: COLORS.successDark },
+  badgeDangerText: { color: COLORS.dangerDark },
+  cardFooterStats: {
+    flexDirection: "row",
+    justifyContent: "space-between",
+    alignItems: "center",
   },
-  subjectTrackFill: { height: "100%", borderRadius: 3 },
-  cardFooterStats: { flexDirection: "row", justifyContent: "space-between" },
-  footerStatText: { fontSize: 12, color: "#64748B" },
-  boldDark: { color: "#0F172A", fontWeight: "700" },
+  statPillsContainer: { flexDirection: "row", gap: 6 },
+  miniStatPill: {
+    backgroundColor: COLORS.white,
+    paddingHorizontal: 8,
+    paddingVertical: 3,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: COLORS.border,
+  },
+  miniStatPillLabel: { fontSize: 11, color: COLORS.slate },
+  footerPresentText: { color: COLORS.success, fontWeight: "700" },
+  footerAbsentText: { color: COLORS.danger, fontWeight: "700" },
+  boldDark: { color: COLORS.ink, fontWeight: "700" },
+  canSkipTag: {
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+  canSkipSafe: { backgroundColor: COLORS.chipSafeBg },
+  canSkipMuted: { backgroundColor: COLORS.trackBg },
+  canSkipText: { fontSize: 11, fontWeight: "800" },
+  canSkipSafeText: { color: COLORS.successDark },
+  canSkipMutedText: { color: COLORS.slate },
 
   /* Modal Sheet */
   modalBackdrop: {
     flex: 1,
-    backgroundColor: "rgba(15, 23, 42, 0.6)",
+    backgroundColor: COLORS.overlay,
     justifyContent: "flex-end",
   },
   modalSheet: {
-    backgroundColor: "#FFFFFF",
+    backgroundColor: COLORS.white,
     borderTopLeftRadius: 24,
     borderTopRightRadius: 24,
     padding: 20,
@@ -542,34 +701,37 @@ const styles = StyleSheet.create({
     alignItems: "center",
     marginBottom: 16,
     borderBottomWidth: 1,
-    borderBottomColor: "#F1F5F9",
+    borderBottomColor: COLORS.trackBg,
     paddingBottom: 12,
   },
-  modalSubjectTitle: { fontSize: 16, fontWeight: "800", color: "#0F172A" },
-  modalSubjectSub: { fontSize: 12, color: "#64748B", marginTop: 2 },
+  modalTitleContainer: { flex: 1, marginRight: 10 },
+  modalSubjectTitle: { fontSize: 16, fontWeight: "800", color: COLORS.ink },
+  modalSubjectSub: { fontSize: 12, color: COLORS.slate, marginTop: 2 },
   modalCloseIcon: {
     width: 32,
     height: 32,
     borderRadius: 16,
-    backgroundColor: "#F1F5F9",
+    backgroundColor: COLORS.trackBg,
     justifyContent: "center",
     alignItems: "center",
   },
-  closeIconText: { fontSize: 14, color: "#64748B", fontWeight: "700" },
+  closeIconText: { fontSize: 14, color: COLORS.slate, fontWeight: "700" },
   logRow: {
     flexDirection: "row",
     justifyContent: "space-between",
     alignItems: "center",
     paddingVertical: 12,
     borderBottomWidth: 1,
-    borderBottomColor: "#F8FAFC",
+    borderBottomColor: COLORS.bg,
   },
-  logDate: { fontSize: 14, fontWeight: "700", color: "#0F172A" },
-  logTime: { fontSize: 12, color: "#64748B", marginTop: 2 },
+  logDate: { fontSize: 14, fontWeight: "700", color: COLORS.ink },
+  logTime: { fontSize: 12, color: COLORS.slate, marginTop: 2 },
   logBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
-  logBadgePresent: { backgroundColor: "#ECFDF5" },
-  logBadgeAbsent: { backgroundColor: "#FEF2F2" },
+  logBadgePresent: { backgroundColor: COLORS.chipSafeBg },
+  logBadgeAbsent: { backgroundColor: COLORS.chipDangerBg },
+  logBadgeUnknown: { backgroundColor: COLORS.trackBg },
   logBadgeText: { fontSize: 12, fontWeight: "700" },
-  logTextPresent: { color: "#059669" },
-  logTextAbsent: { color: "#DC2626" },
+  logTextPresent: { color: COLORS.successDark },
+  logTextAbsent: { color: COLORS.dangerDark },
+  logTextUnknown: { color: COLORS.slate },
 });
