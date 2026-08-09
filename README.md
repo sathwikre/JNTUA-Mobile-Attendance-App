@@ -16,6 +16,7 @@ A React Native (Expo) mobile application that lets students of JNTUA CEA view an
 - [Data Pipeline](#data-pipeline)
 - [The 75% Rule Logic](#the-75-rule-logic)
 - [Troubleshooting](#troubleshooting)
+- [OTA Updates (EAS Update)](#ota-updates-eas-update)
 - [Future Work](#future-work)
 - [License](#license)
 
@@ -92,10 +93,12 @@ The application is a single-screen Expo Router app with a clear separation of co
 │   ├── _layout.tsx            # Expo Router root layout (Stack, no headers)
 │   └── index.tsx              # Main screen: WebView + dashboard + modal
 ├── utils/
-│   └── automationScripts.ts   # Injection scripts + shared TypeScript types
+│   ├── automationScripts.ts   # Injection scripts + shared TypeScript types
+│   └── updateManager.ts       # OTA update hook + status types
 ├── assets/
 │   └── images/                # App icons, splash, favicon
 ├── app.json                   # Expo app configuration
+├── eas.json                   # EAS build profiles + channels
 ├── package.json               # Dependencies & scripts
 ├── tsconfig.json              # TypeScript config (strict)
 ├── eslint.config.js           # ESLint / Expo lint config
@@ -112,6 +115,7 @@ The entire user interface and orchestration logic. It contains:
 - **Navigation handler** — routes on the current portal page and injects the appropriate script.
 - **Message handler** — parses `postMessage` payloads and dispatches reducer actions.
 - **Dashboard UI** — profile banner, overall summary card, subject list, and the attendance-log modal.
+- **Update banner** — a slim, non-blocking indicator while `expo-updates` checks/applies an OTA update.
 
 ### `utils/automationScripts.ts`
 
@@ -126,6 +130,15 @@ Contains the three injection scripts and the data contracts shared with the UI:
 | `SubjectAttendanceData` | Subject name, present/absent/total counts, percentage, and `records[]`. |
 | `AttendanceRecord` | A single log entry: `{ date, time, status }` where status is `Present` / `Absent` / `Unknown`. |
 
+### `utils/updateManager.ts`
+
+Encapsulates all `expo-updates` logic in one typed module:
+
+- `UpdateStatus` — union type mapping the OTA lifecycle (`checking`, `applying`, `ready`, `upToDate`, `error`, `unknown`).
+- `UpdateManager` — typed interface `{ status, checkForUpdate, lastError }`.
+- `shouldCheckOnMount()` — returns `false` in `__DEV__` and Expo Go, `true` in production builds.
+- `useUpdateManager()` — hook wrapping `expo-updates`' `useUpdates()` into the `UpdateStatus` state machine.
+
 ---
 
 ## Tech Stack
@@ -137,6 +150,7 @@ Contains the three injection scripts and the data contracts shared with the UI:
 | Language | React 19.1 + TypeScript 5.9 (strict) |
 | Routing | Expo Router 6 |
 | WebView | `react-native-webview` 13.15 |
+| OTA | `expo-updates` via EAS Update |
 | Linting | ESLint 9 via `eslint-config-expo` |
 
 No additional state-management or data-fetching libraries are used — the app relies on React's built-in `useReducer` and the WebView bridge.
@@ -154,7 +168,8 @@ No additional state-management or data-fetching libraries are used — the app r
 
 ### Install
 
-```bash
+```
+bash
 # Clone the repository
 git clone <repository-url>
 cd JNTUA-Attendance
@@ -165,7 +180,8 @@ npm install
 
 ### Run
 
-```bash
+```
+bash
 # Start the Expo dev server
 npm start
 ```
@@ -179,7 +195,8 @@ Then:
 
 ### Verify lint
 
-```bash
+```
+bash
 npm run lint
 ```
 
@@ -273,6 +290,67 @@ This single derived value drives all warning UI (card background, status chip, b
 | No subjects appear after login | The portal's subject-row selector (`tr.clickable-row`) did not match | The portal DOM likely changed; update `selectSubjectByIndexScript`. |
 | `Unknown` statuses in the log | Portal table lacked a status badge for some rows | Expected — the app marks unclear entries as `Unknown` rather than dropping them. |
 | Lint fails | Code does not meet project quality gate | Run `npm run lint`, read the errors, and fix the root cause. |
+
+---
+
+## OTA Updates (EAS Update)
+
+The app uses **pure EAS Update** to ship scraper-script fixes and minor UI tweaks over-the-air — no store reinstall or native rebuild required. The scraping logic lives in `utils/automationScripts.ts` and the UI in `app/index.tsx`, both pure JS/TS bundled into the JS runtime, making them ideal OTA targets.
+
+### Channels
+
+Two channels provide a safe rollout path:
+
+| Channel | Build profile | Purpose |
+| ------- | ------------- | ------- |
+| `staging` | `preview` | Validate a new update before reaching users |
+| `production` | `production` | Live updates delivered to all users |
+
+The app checks for updates on launch (`checkAutomatically: "ON_LOAD"`) and on foreground, guarded by `shouldCheckOnMount()` in `utils/updateManager.ts` (skipped in `__DEV__` and Expo Go). A lightweight, non-blocking banner shows while checking/applying.
+
+### Publishing Runbook
+
+1. **Install tooling** (one-time):
+
+```
+bash
+npm run eas:init          # generates/verifies eas.json
+eas-cli login             # authenticate with your Expo account
+```
+
+1. **Create a staging build** (one-time, includes native config):
+
+```
+bash
+npm run build:preview     # eas-cli build --profile preview --platform android
+```
+
+Install this build on a test device.
+
+1. **Publish a staging update** (every time you change `automationScripts.ts` or `index.tsx`):
+
+```bash
+npm run update:staging    # eas-cli update --channel staging
+```
+
+Open the staging build and verify the new behavior.
+
+1. **Promote to production** once validated:
+
+```
+bash
+npm run promote:production  # eas-cli promote --channel staging --to production
+```
+
+Production users receive the update automatically on next launch. Alternatively, publish directly to production with `npm run update:production`.
+
+> **Important:** `eas update` only ships changes to the JS bundle. Any change to native modules, `app.json` native config, or dependencies requires a new build (`npm run build:production`) rather than an update. The `runtimeVersion` uses the `appVersion` policy so a version bump in `app.json` forces a fresh build.
+
+### Configuration
+
+- The `updates` block and `runtimeVersion` live in `app.json`.
+- The `eas.json` maps `preview` → `staging` and `production` → `production`.
+- Replace `YOUR-PROJECT-ID` in `app.json` → `updates.url` with your actual EAS project ID (run `eas-cli project:info` to find it).
 
 ---
 

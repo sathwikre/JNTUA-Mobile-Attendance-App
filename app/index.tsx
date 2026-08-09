@@ -17,6 +17,10 @@ import {
   StudentInfo,
   SubjectAttendanceData,
 } from "../utils/automationScripts";
+import {
+  shouldCheckOnMount,
+  useUpdateManager,
+} from "../utils/updateManager";
 
 const COLORS = {
   primary: "#6366F1",
@@ -118,6 +122,13 @@ type MessagePayload =
 export default function Index() {
   const webViewRef = useRef<WebViewType>(null);
   const [state, dispatch] = useReducer(appReducer, initialState);
+  const update = useUpdateManager();
+
+  useEffect(() => {
+    if (shouldCheckOnMount()) {
+      void update.checkForUpdate();
+    }
+  }, [update]);
 
   const {
     webViewKey,
@@ -219,6 +230,16 @@ export default function Index() {
 
   return (
     <View style={styles.container}>
+      {update.status === "checking" || update.status === "applying" ? (
+        <View style={styles.updateBanner}>
+          <Text style={styles.updateBannerText}>
+            {update.status === "applying"
+              ? "Applying update…"
+              : "Checking for updates…"}
+          </Text>
+        </View>
+      ) : null}
+
       <View style={!isLoggedIn ? styles.fullWebView : styles.hiddenWebView}>
         <WebView
           key={webViewKey}
@@ -508,6 +529,13 @@ export default function Index() {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: COLORS.bg, paddingTop: 40 },
+  updateBanner: {
+    backgroundColor: COLORS.primaryLight,
+    paddingVertical: 6,
+    paddingHorizontal: 16,
+    alignItems: "center",
+  },
+  updateBannerText: { fontSize: 12, fontWeight: "600", color: COLORS.primary },
   hiddenWebView: { width: 0, height: 0, overflow: "hidden" },
   fullWebView: { flex: 1 },
 
