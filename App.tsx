@@ -16,11 +16,16 @@ import {
   selectSubjectByIndexScript,
   StudentInfo,
   SubjectAttendanceData,
-} from "../utils/automationScripts";
+} from "./utils/automationScripts";
+import {
+  PreviousAttendanceResult,
+  loadPreviousResult,
+  savePreviousResult,
+} from "./utils/storage";
 import {
   shouldCheckOnMount,
   useUpdateManager,
-} from "../utils/updateManager";
+} from "./utils/updateManager";
 
 const COLORS = {
   primary: "#6366F1",
@@ -46,6 +51,8 @@ const COLORS = {
   overlay: "rgba(15, 23, 42, 0.6)",
 };
 
+const STALL_TIMEOUT_MS = 15000;
+
 interface AppState {
   webViewKey: number;
   isLoggedIn: boolean;
@@ -56,6 +63,9 @@ interface AppState {
   subjectsData: SubjectAttendanceData[];
   isScrapingFinished: boolean;
   selectedSubject: SubjectAttendanceData | null;
+  hasPreviousResult: boolean;
+  previousResult: PreviousAttendanceResult | null;
+  isSelectionError: boolean;
 }
 
 const initialState: AppState = {
@@ -68,6 +78,9 @@ const initialState: AppState = {
   subjectsData: [],
   isScrapingFinished: false,
   selectedSubject: null,
+  hasPreviousResult: false,
+  previousResult: null,
+  isSelectionError: false,
 };
 
 type AppAction =
@@ -77,12 +90,21 @@ type AppAction =
   | { type: "SET_SUBJECT_COUNT"; count: number }
   | { type: "ADD_ATTENDANCE_ITEM"; data: SubjectAttendanceData }
   | { type: "SET_SCRAPING_FINISHED" }
-  | { type: "SET_SELECTED_SUBJECT"; data: SubjectAttendanceData | null };
+  | { type: "SET_SELECTED_SUBJECT"; data: SubjectAttendanceData | null }
+  | { type: "SET_PREVIOUS_RESULT"; result: PreviousAttendanceResult | null }
+  | { type: "HYDRATE_PREVIOUS_RESULT"; data: PreviousAttendanceResult }
+  | { type: "SET_SELECTION_ERROR" }
+  | { type: "CLEAR_SELECTION_ERROR" };
 
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "RESET":
-      return { ...initialState, webViewKey: state.webViewKey + 1 };
+      return {
+        ...initialState,
+        webViewKey: state.webViewKey + 1,
+        hasPreviousResult: state.hasPreviousResult,
+        previousResult: state.previousResult,
+      };
     case "SET_LOGGED_IN":
       return { ...state, isLoggedIn: true };
     case "SET_STUDENT_INFO":
@@ -106,8 +128,34 @@ function appReducer(state: AppState, action: AppAction): AppState {
     }
     case "SET_SCRAPING_FINISHED":
       return { ...state, isScrapingFinished: true };
+    case "SET_SELECTION_ERROR":
+      return { ...state, isSelectionError: true };
+    case "CLEAR_SELECTION_ERROR":
+      return {
+        ...initialState,
+        webViewKey: state.webViewKey,
+        hasPreviousResult: state.hasPreviousResult,
+        previousResult: state.previousResult,
+      };
     case "SET_SELECTED_SUBJECT":
       return { ...state, selectedSubject: action.data };
+    case "SET_PREVIOUS_RESULT":
+      return {
+        ...state,
+        previousResult: action.result,
+        hasPreviousResult: action.result !== null,
+      };
+    case "HYDRATE_PREVIOUS_RESULT":
+      return {
+        ...state,
+        isLoggedIn: true,
+        isScrapingFinished: true,
+        studentInfo: action.data.studentInfo,
+        subjectsData: action.data.subjectsData,
+        currentIndex: 0,
+        totalSubjects: action.data.subjectsData.length,
+        fetchedIndices: action.data.subjectsData.map((_, i) => i),
+      };
     default:
       return state;
   }
@@ -139,6 +187,9 @@ export default function Index() {
     subjectsData,
     isScrapingFinished,
     selectedSubject,
+    hasPreviousResult,
+    previousResult,
+    isSelectionError,
   } = state;
 
   const stateRef = useRef(state);
@@ -146,9 +197,18 @@ export default function Index() {
     stateRef.current = state;
   });
 
+  const lastActivityRef = useRef<number>(Date.now());
+  const persistedSigRef = useRef<string | null>(null);
+
   const handleFullReset = useCallback(() => {
     dispatch({ type: "RESET" });
   }, []);
+
+  const handlePreviousAttendance = useCallback(() => {
+    if (previousResult) {
+      dispatch({ type: "HYDRATE_PREVIOUS_RESULT", data: previousResult });
+    }
+  }, [previousResult]);
 
   const handleNavigationStateChange = useCallback(
     (navState: WebViewNavigation) => {
@@ -184,6 +244,7 @@ export default function Index() {
   const handleMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const payload = JSON.parse(event.nativeEvent.data) as MessagePayload;
+      lastActivityRef.current = Date.now();
 
       switch (payload.type) {
         case "STUDENT_INFO":
@@ -228,6 +289,55 @@ export default function Index() {
     return Math.min(subjectSkippable, maxOverallSkippable);
   };
 
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const result = await loadPreviousResult();
+      if (!cancelled) dispatch({ type: "SET_PREVIOUS_RESULT", result });
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (
+      !(isScrapingFinished && isLoggedIn && studentInfo && subjectsData.length > 0)
+    ) {
+      return;
+    }
+    const sig = `${studentInfo.name}|${subjectsData.length}|${overallClasses}|${overallPresent}`;
+    if (persistedSigRef.current === sig) return;
+    persistedSigRef.current = sig;
+    // Persist only the most recently viewed result; writing overwrites any older stored entry.
+    const latestResult: PreviousAttendanceResult = { studentInfo, subjectsData };
+    void savePreviousResult(latestResult);
+    // Keep in-memory previousResult in sync so the "Previous Attendance" button
+    // shows the latest result after navigating back.
+    dispatch({ type: "SET_PREVIOUS_RESULT", result: latestResult });
+  }, [
+    isScrapingFinished,
+    isLoggedIn,
+    studentInfo,
+    subjectsData,
+    overallClasses,
+    overallPresent,
+  ]);
+
+  useEffect(() => {
+    if (!isLoggedIn || isScrapingFinished) {
+      return;
+    }
+    lastActivityRef.current = Date.now();
+    const interval = setInterval(() => {
+      if (Date.now() - lastActivityRef.current > STALL_TIMEOUT_MS) {
+        dispatch({ type: "SET_SELECTION_ERROR" });
+        clearInterval(interval);
+      }
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [isLoggedIn, isScrapingFinished]);
+
   return (
     <View style={styles.container}>
       {update.status === "checking" || update.status === "applying" ? (
@@ -251,10 +361,19 @@ export default function Index() {
           domStorageEnabled
           incognito={false}
         />
+
+        {!isLoggedIn && hasPreviousResult && (
+          <TouchableOpacity
+            style={styles.prevAttendanceBtn}
+            onPress={handlePreviousAttendance}
+          >
+            <Text style={styles.prevAttendanceBtnText}>Previous Attendance</Text>
+          </TouchableOpacity>
+        )}
       </View>
 
       {/* Sync Loader Overlay */}
-      {isLoggedIn && !isScrapingFinished && (
+      {isLoggedIn && !isScrapingFinished && !isSelectionError && (
         <View style={styles.loadingContainer}>
           <View style={styles.loadingCard}>
             <ActivityIndicator size="large" color={COLORS.primary} />
@@ -271,6 +390,33 @@ export default function Index() {
                   : "Connecting..."}
               </Text>
             </View>
+          </View>
+        </View>
+      )}
+
+      {/* Selection Error Overlay */}
+      {isSelectionError && isLoggedIn && !isScrapingFinished && (
+        <View style={styles.loadingContainer}>
+          <View style={styles.errorCard}>
+            <TouchableOpacity
+              style={[styles.modalCloseIcon, styles.errorCloseIcon]}
+              onPress={() => dispatch({ type: "CLEAR_SELECTION_ERROR" })}
+            >
+              <Text style={styles.closeIconText}>✕</Text>
+            </TouchableOpacity>
+            <Text style={styles.errorIcon}>⚠</Text>
+            <Text style={styles.errorTitle}>Couldn’t load subjects right now</Text>
+            <Text style={styles.errorBody}>
+              The attendance portal was recently updated, so the app can’t detect
+              your semester or subjects at the moment. This is a temporary issue
+              — we’re working on a fix.
+            </Text>
+            <TouchableOpacity
+              style={styles.errorTryAgainBtn}
+              onPress={handleFullReset}
+            >
+              <Text style={styles.errorTryAgainText}>Try again</Text>
+            </TouchableOpacity>
           </View>
         </View>
       )}
@@ -539,6 +685,22 @@ const styles = StyleSheet.create({
   hiddenWebView: { width: 0, height: 0, overflow: "hidden" },
   fullWebView: { flex: 1 },
 
+  /* Previous Attendance Overlay Button */
+  prevAttendanceBtn: {
+    position: "absolute",
+    bottom: 36,
+    left: 0,
+    right: 0,
+    alignSelf: "center",
+    backgroundColor: COLORS.primary,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 14,
+    elevation: 4,
+    alignItems: "center",
+  },
+  prevAttendanceBtnText: { color: COLORS.white, fontWeight: "700", fontSize: 13 },
+
   /* Loader */
   loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
   loadingCard: {
@@ -560,6 +722,35 @@ const styles = StyleSheet.create({
     borderRadius: 12,
   },
   loaderBadgeText: { fontSize: 12, fontWeight: "700", color: COLORS.primary },
+
+  /* Selection Error Overlay */
+  errorCard: {
+    width: "100%",
+    backgroundColor: COLORS.white,
+    padding: 28,
+    borderRadius: 20,
+    alignItems: "center",
+    elevation: 3,
+    borderWidth: 1,
+    borderColor: COLORS.dangerSoftBorder,
+    borderLeftWidth: 6,
+    borderLeftColor: COLORS.danger,
+  },
+  errorIcon: { fontSize: 28, color: COLORS.dangerDark, marginBottom: 8, textAlign: "center" },
+  errorTitle: { fontSize: 17, fontWeight: "700", color: COLORS.ink, marginTop: 4, textAlign: "center" },
+  errorBody: { fontSize: 13, color: COLORS.slate, marginTop: 8, textAlign: "center", lineHeight: 18 },
+  errorCloseIcon: { position: "absolute", top: 12, right: 12 },
+  errorTryAgainBtn: {
+    backgroundColor: COLORS.danger,
+    paddingHorizontal: 22,
+    paddingVertical: 12,
+    borderRadius: 14,
+    elevation: 4,
+    alignItems: "center",
+    marginTop: 16,
+    width: "100%",
+  },
+  errorTryAgainText: { color: COLORS.white, fontWeight: "700", fontSize: 13 },
 
   /* Dashboard */
   dashboardContainer: { flex: 1, paddingHorizontal: 20 },
