@@ -76,8 +76,9 @@ export const selectSubjectByIndexScript = (targetIndex: number): string => `
       if (rows.length > 0) {
         clearInterval(interval);
         
-        if (window.ReactNativeWebView) {
-          window.ReactNativeWebView.postMessage(JSON.stringify({
+        const rn = window.ReactNativeWebView;
+        if (rn) {
+          rn.postMessage(JSON.stringify({
             type: 'SUBJECT_COUNT',
             count: rows.length
           }));
@@ -85,12 +86,10 @@ export const selectSubjectByIndexScript = (targetIndex: number): string => `
 
         if (${targetIndex} < rows.length) {
           rows[${targetIndex}].click();
-        } else {
-          if (window.ReactNativeWebView) {
-            window.ReactNativeWebView.postMessage(JSON.stringify({
-              type: 'SCRAPING_COMPLETE'
-            }));
-          }
+        } else if (rn) {
+          rn.postMessage(JSON.stringify({
+            type: 'SCRAPING_COMPLETE'
+          }));
         }
       } else if (attempts >= 20) {
         clearInterval(interval);

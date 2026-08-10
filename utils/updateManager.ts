@@ -24,11 +24,7 @@ const CHECK_TIMEOUT_MS = 30_000;
  * (where `expo-updates` is unavailable), `true` in production builds.
  */
 export function shouldCheckOnMount(): boolean {
-  if (__DEV__) return false;
-  if (Constants.executionEnvironment === ExecutionEnvironment.StoreClient) {
-    return true;
-  }
-  return false;
+  return !__DEV__ && Constants.executionEnvironment === ExecutionEnvironment.StoreClient;
 }
 
 /**
@@ -51,13 +47,8 @@ export function useUpdateManager(): UpdateManager {
   const checkingStartTimeRef = useRef<number | null>(null);
 
   useEffect(() => {
-    if (isChecking) {
-      checkingStartTimeRef.current = Date.now();
-      setCheckingTimedOut(false);
-    } else {
-      checkingStartTimeRef.current = null;
-      setCheckingTimedOut(false);
-    }
+    setCheckingTimedOut(false);
+    checkingStartTimeRef.current = isChecking ? Date.now() : null;
   }, [isChecking]);
 
   useEffect(() => {
@@ -76,14 +67,12 @@ export function useUpdateManager(): UpdateManager {
     return () => clearInterval(interval);
   }, [isChecking, checkingTimedOut]);
 
-  const status: UpdateStatus = (isChecking && !checkingTimedOut)
-    ? "checking"
-    : isDownloading || isRestarting
-      ? "applying"
-      : checkError || downloadError
-        ? "error"
-        : manualStatus ??
-          (isUpdateAvailable || isUpdatePending ? "ready" : "unknown");
+  let status: UpdateStatus;
+  if (isChecking && !checkingTimedOut) status = "checking";
+  else if (isDownloading || isRestarting) status = "applying";
+  else if (checkError || downloadError) status = "error";
+  else if (manualStatus !== null) status = manualStatus;
+  else status = isUpdateAvailable || isUpdatePending ? "ready" : "unknown";
 
   const lastError: string | null =
     checkError?.message ?? downloadError?.message ?? null;
@@ -98,7 +87,6 @@ export function useUpdateManager(): UpdateManager {
 
     try {
       const result = await Updates.checkForUpdateAsync();
-      clearTimeout(timeoutId);
       if (result.isAvailable) {
         setManualStatus("applying");
         await Updates.fetchUpdateAsync();
@@ -107,9 +95,10 @@ export function useUpdateManager(): UpdateManager {
         setManualStatus("upToDate");
       }
     } catch (err) {
-      clearTimeout(timeoutId);
       console.warn("Update check failed:", err);
       setManualStatus("error");
+    } finally {
+      clearTimeout(timeoutId);
     }
   }, []);
 

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
-  ActivityIndicator,
+  Animated,
   FlatList,
+  Linking,
   Modal,
+  Platform,
   StyleSheet,
   Text,
   TouchableOpacity,
@@ -14,6 +16,7 @@ import {
   autoSubmitFirstSemesterScript,
   parseDetailedAttendanceAndGoHomeScript,
   selectSubjectByIndexScript,
+  AttendanceRecord,
   StudentInfo,
   SubjectAttendanceData,
 } from "./utils/automationScripts";
@@ -22,37 +25,168 @@ import {
   loadPreviousResult,
   savePreviousResult,
 } from "./utils/storage";
-import {
-  shouldCheckOnMount,
-  useUpdateManager,
-} from "./utils/updateManager";
+import { shouldCheckOnMount, useUpdateManager } from "./utils/updateManager";
 
+/* ------------------------------------------------------------------ */
+/*  Claude editorial palette                                           */
+/* ------------------------------------------------------------------ */
 const COLORS = {
-  primary: "#6366F1",
-  primaryLight: "#EEF2FF",
-  success: "#10B981",
-  successDark: "#059669",
-  danger: "#EF4444",
-  dangerDark: "#DC2626",
-  ink: "#0F172A",
-  slate: "#64748B",
-  slateLight: "#94A3B8",
-  white: "#FFFFFF",
-  bg: "#F8FAFC",
-  border: "#E2E8F0",
-  trackBg: "#F1F5F9",
-  chipSafeBg: "#ECFDF5",
-  chipDangerBg: "#FEF2F2",
-  dangerSoftBg: "#FEF2F2",
-  dangerSoftBorder: "#FECDD3",
-  profileBg: "#334155",
-  avatarBg: "#475569",
-  profileBorder: "#475569",
-  overlay: "rgba(15, 23, 42, 0.6)",
+  canvas: "#faf9f5",
+  surfaceCard: "#efe9de",
+  creamStrong: "#e8e0d2",
+  surfaceDark: "#181715",
+  primary: "#cc785c",
+  primaryActive: "#a9583e",
+  ink: "#141413",
+  body: "#3d3d3a",
+  muted: "#6c6a64",
+  mutedSoft: "#8e8b82",
+  hairline: "#e6dfd8",
+  hairlineSoft: "#ebe6df",
+  onDark: "#faf9f5",
+  onDarkSoft: "#a09d96",
+  success: "#3e8a52",
+  live: "#5db872",
+  error: "#c64545",
+  amber: "#e8a55a",
+  crab: "#d5795f",
+  handle: "#8a5a3b",
+  head: "#9aa0a6",
+  dTop: "#f2d8a0",
+  dMid: "#7d94a1",
+  dBase: "#4f6b78",
+  overlay: "rgba(20, 20, 19, 0.58)",
 };
 
+const SERIF = Platform.OS === "ios" ? "Georgia" : "serif";
+const GITHUB_URL = "https://github.com/Chanikya-WebDev/JNTUA-Mobile-Attendance-App";
 const STALL_TIMEOUT_MS = 15000;
 
+const STATUS_COLOR: Record<AttendanceRecord["status"], string> = {
+  Present: COLORS.success,
+  Absent: COLORS.error,
+  Unknown: COLORS.muted,
+};
+
+/* ------------------------------------------------------------------ */
+/*  Small building blocks                                              */
+/* ------------------------------------------------------------------ */
+function Spike({ size = 13, color = COLORS.primary }: { size?: number; color?: string }) {
+  return (
+    <View style={{ width: size, height: size }}>
+      {[0, 45, 90, 135].map((a) => (
+        <View
+          key={a}
+          style={{
+            position: "absolute",
+            left: size / 2 - 1.5,
+            top: 0,
+            width: 3,
+            height: size,
+            borderRadius: 2,
+            backgroundColor: color,
+            transform: [{ rotate: `${a}deg` }],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+/* Claude crab — looping sync animation, pure Animated, no deps */
+function CrabScene() {
+  const walkX = useRef(new Animated.Value(-170)).current;
+  const hopY = useRef(new Animated.Value(0)).current;
+  const swing = useRef(new Animated.Value(14)).current;
+  const squish = useRef(new Animated.Value(1)).current;
+  const sparkOp = useRef(new Animated.Value(0)).current;
+  const sparkT = useRef(new Animated.Value(0)).current;
+  const blink = useRef(new Animated.Value(1)).current;
+  const legA = useRef(new Animated.Value(0)).current;
+  const legB = useRef(new Animated.Value(-2.5)).current;
+
+  useEffect(() => {
+    const t = (v: Animated.Value, to: number, d: number) =>
+      Animated.timing(v, { toValue: to, duration: d, useNativeDriver: true });
+    const anims = [
+      t(walkX, 0, 900),
+      Animated.loop(Animated.sequence([Animated.delay(200), t(hopY, -14, 420), t(hopY, 0, 420), Animated.delay(650)])),
+      Animated.loop(Animated.sequence([
+        t(swing, -8, 280), t(swing, 78, 200), t(squish, 0.5, 110),
+        Animated.parallel([t(squish, 1, 220), t(sparkOp, 1, 90), t(sparkT, 1, 420)]),
+        t(sparkOp, 0, 180), t(sparkT, 0, 0), t(swing, 14, 380), Animated.delay(420),
+      ])),
+      Animated.loop(Animated.sequence([Animated.delay(2600), t(blink, 0.12, 110), t(blink, 1, 110)])),
+      Animated.loop(Animated.parallel([
+        Animated.sequence([t(legA, -2.5, 220), t(legA, 0, 220)]),
+        Animated.sequence([t(legB, 0, 220), t(legB, -2.5, 220)]),
+      ])),
+    ];
+    anims.forEach((a) => a.start());
+    return () => anims.forEach((a) => a.stop());
+  }, [walkX, hopY, swing, squish, sparkOp, sparkT, blink, legA, legB]);
+
+  const rot = swing.interpolate({ inputRange: [-20, 90], outputRange: ["-20deg", "90deg"] });
+  const ringScale = sparkT.interpolate({ inputRange: [0, 1], outputRange: [0.4, 1.6] });
+  const ringOp = sparkT.interpolate({ inputRange: [0, 0.2, 1], outputRange: [0, 0.8, 0] });
+  const sparks = [
+    { dx: 14, dy: -14, c: COLORS.primary },
+    { dx: 4, dy: -22, c: COLORS.amber },
+    { dx: -10, dy: -14, c: COLORS.primary },
+  ];
+
+  return (
+    <View style={{ width: 250, height: 150 }}>
+      <Animated.View style={{ position: "absolute", width: 250, height: 150, transform: [{ translateX: walkX }] }}>
+        <View style={{ position: "absolute", left: 58, top: 140, width: 80, height: 6, backgroundColor: COLORS.ink }} />
+        <Animated.View style={{ position: "absolute", width: 250, height: 150, transform: [{ translateY: hopY }] }}>
+          <View style={{ position: "absolute", left: 36, top: 92, width: 14, height: 16, backgroundColor: COLORS.crab }} />
+          <View style={{ position: "absolute", left: 50, top: 68, width: 88, height: 56, backgroundColor: COLORS.crab }} />
+          <View style={{ position: "absolute", left: 138, top: 90, width: 12, height: 16, backgroundColor: COLORS.crab }} />
+          <Animated.View style={{ position: "absolute", left: 66, top: 82, width: 8, height: 16, backgroundColor: COLORS.ink, transform: [{ scaleY: blink }] }} />
+          <Animated.View style={{ position: "absolute", left: 114, top: 82, width: 8, height: 16, backgroundColor: COLORS.ink, transform: [{ scaleY: blink }] }} />
+          <Animated.View style={{ position: "absolute", left: 64, top: 124, width: 10, height: 16, backgroundColor: COLORS.crab, transform: [{ translateY: legA }] }} />
+          <Animated.View style={{ position: "absolute", left: 82, top: 124, width: 10, height: 16, backgroundColor: COLORS.crab, transform: [{ translateY: legB }] }} />
+          <Animated.View style={{ position: "absolute", left: 108, top: 124, width: 10, height: 16, backgroundColor: COLORS.crab, transform: [{ translateY: legA }] }} />
+          <Animated.View style={{ position: "absolute", left: 126, top: 124, width: 10, height: 16, backgroundColor: COLORS.crab, transform: [{ translateY: legB }] }} />
+          <Animated.View style={{ position: "absolute", left: 131, top: 44, width: 28, height: 116, transform: [{ rotate: rot }] }}>
+            <View style={{ position: "absolute", left: 0, top: 0, width: 28, height: 15, backgroundColor: COLORS.head }} />
+            <View style={{ position: "absolute", left: 11, top: 12, width: 6, height: 46, backgroundColor: COLORS.handle }} />
+          </Animated.View>
+        </Animated.View>
+      </Animated.View>
+
+      <Animated.View style={{ position: "absolute", left: 209, top: 112, width: 28, height: 48, transform: [{ scaleY: squish }] }}>
+        <View style={{ position: "absolute", left: 7, top: 0, width: 14, height: 8, backgroundColor: COLORS.dTop }} />
+        <View style={{ position: "absolute", left: 0, top: 8, width: 28, height: 16, backgroundColor: COLORS.dMid }} />
+      </Animated.View>
+      <View style={{ position: "absolute", left: 200, top: 136, width: 46, height: 10, backgroundColor: COLORS.dBase }} />
+
+      <Animated.View
+        style={{
+          position: "absolute", left: 205, top: 95, width: 30, height: 30, borderRadius: 15,
+          borderWidth: 2, borderColor: COLORS.primary, opacity: ringOp, transform: [{ scale: ringScale }],
+        }}
+      />
+      {sparks.map((s, i) => (
+        <Animated.View
+          key={i}
+          style={{
+            position: "absolute", left: 216, top: 100, width: 6, height: 6, backgroundColor: s.c, opacity: sparkOp,
+            transform: [
+              { translateX: sparkT.interpolate({ inputRange: [0, 1], outputRange: [0, s.dx] }) },
+              { translateY: sparkT.interpolate({ inputRange: [0, 1], outputRange: [0, s.dy] }) },
+            ],
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  State — unchanged workflow                                         */
+/* ------------------------------------------------------------------ */
 interface AppState {
   webViewKey: number;
   isLoggedIn: boolean;
@@ -83,6 +217,15 @@ const initialState: AppState = {
   isSelectionError: false,
 };
 
+function preserveSession(state: AppState, webViewKeyDelta: number): AppState {
+  return {
+    ...initialState,
+    webViewKey: state.webViewKey + webViewKeyDelta,
+    hasPreviousResult: state.hasPreviousResult,
+    previousResult: state.previousResult,
+  };
+}
+
 type AppAction =
   | { type: "RESET" }
   | { type: "SET_LOGGED_IN" }
@@ -99,12 +242,7 @@ type AppAction =
 function appReducer(state: AppState, action: AppAction): AppState {
   switch (action.type) {
     case "RESET":
-      return {
-        ...initialState,
-        webViewKey: state.webViewKey + 1,
-        hasPreviousResult: state.hasPreviousResult,
-        previousResult: state.previousResult,
-      };
+      return preserveSession(state, 1);
     case "SET_LOGGED_IN":
       return { ...state, isLoggedIn: true };
     case "SET_STUDENT_INFO":
@@ -112,12 +250,9 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case "SET_SUBJECT_COUNT":
       return { ...state, totalSubjects: action.count };
     case "ADD_ATTENDANCE_ITEM": {
-      if (state.fetchedIndices.includes(state.currentIndex)) {
-        return state;
-      }
+      if (state.fetchedIndices.includes(state.currentIndex)) return state;
       const nextIndex = state.currentIndex + 1;
-      const finished =
-        state.totalSubjects !== null && nextIndex >= state.totalSubjects;
+      const finished = state.totalSubjects !== null && nextIndex >= state.totalSubjects;
       return {
         ...state,
         fetchedIndices: [...state.fetchedIndices, state.currentIndex],
@@ -131,20 +266,11 @@ function appReducer(state: AppState, action: AppAction): AppState {
     case "SET_SELECTION_ERROR":
       return { ...state, isSelectionError: true };
     case "CLEAR_SELECTION_ERROR":
-      return {
-        ...initialState,
-        webViewKey: state.webViewKey,
-        hasPreviousResult: state.hasPreviousResult,
-        previousResult: state.previousResult,
-      };
+      return preserveSession(state, 0);
     case "SET_SELECTED_SUBJECT":
       return { ...state, selectedSubject: action.data };
     case "SET_PREVIOUS_RESULT":
-      return {
-        ...state,
-        previousResult: action.result,
-        hasPreviousResult: action.result !== null,
-      };
+      return { ...state, previousResult: action.result, hasPreviousResult: action.result !== null };
     case "HYDRATE_PREVIOUS_RESULT":
       return {
         ...state,
@@ -171,163 +297,96 @@ export default function Index() {
   const webViewRef = useRef<WebViewType>(null);
   const [state, dispatch] = useReducer(appReducer, initialState);
   const update = useUpdateManager();
+  const { checkForUpdate } = update;
 
   useEffect(() => {
-    if (shouldCheckOnMount()) {
-      void update.checkForUpdate();
-    }
-  }, [update]);
+    if (shouldCheckOnMount()) void checkForUpdate();
+  }, [checkForUpdate]);
 
   const {
-    webViewKey,
-    isLoggedIn,
-    studentInfo,
-    totalSubjects,
-    fetchedIndices,
-    subjectsData,
-    isScrapingFinished,
-    selectedSubject,
-    hasPreviousResult,
-    previousResult,
-    isSelectionError,
+    webViewKey, isLoggedIn, studentInfo, totalSubjects, fetchedIndices,
+    subjectsData, isScrapingFinished, selectedSubject,
+    hasPreviousResult, previousResult, isSelectionError,
   } = state;
 
   const stateRef = useRef(state);
-  useEffect(() => {
-    stateRef.current = state;
-  });
-
+  useEffect(() => { stateRef.current = state; });
   const lastActivityRef = useRef<number>(Date.now());
   const persistedSigRef = useRef<string | null>(null);
 
-  const handleFullReset = useCallback(() => {
-    dispatch({ type: "RESET" });
-  }, []);
-
+  const handleFullReset = useCallback(() => dispatch({ type: "RESET" }), []);
   const handlePreviousAttendance = useCallback(() => {
-    if (previousResult) {
-      dispatch({ type: "HYDRATE_PREVIOUS_RESULT", data: previousResult });
-    }
+    if (previousResult) dispatch({ type: "HYDRATE_PREVIOUS_RESULT", data: previousResult });
   }, [previousResult]);
 
-  const handleNavigationStateChange = useCallback(
-    (navState: WebViewNavigation) => {
-      const { url, loading } = navState;
-      const {
-        isLoggedIn: loggedIn,
-        isScrapingFinished: scrapingFinished,
-        currentIndex,
-      } = stateRef.current;
-
-      if (url.includes("studenthome.php")) {
-        if (!loggedIn) dispatch({ type: "SET_LOGGED_IN" });
-        if (!loading && !scrapingFinished) {
-          webViewRef.current?.injectJavaScript(autoSubmitFirstSemesterScript);
-        }
-      } else if (url.includes("studentsubjects.php")) {
-        if (!loading && !scrapingFinished) {
-          webViewRef.current?.injectJavaScript(
-            selectSubjectByIndexScript(currentIndex)
-          );
-        }
-      } else if (url.includes("studentsubatt.php")) {
-        if (!loading && !scrapingFinished) {
-          webViewRef.current?.injectJavaScript(
-            parseDetailedAttendanceAndGoHomeScript
-          );
-        }
-      }
-    },
-    []
-  );
+  const handleNavigationStateChange = useCallback((navState: WebViewNavigation) => {
+    const { url, loading } = navState;
+    const { isLoggedIn: loggedIn, isScrapingFinished: scrapingFinished, currentIndex } = stateRef.current;
+    const shouldInject = !loading && !scrapingFinished;
+    if (url.includes("studenthome.php")) {
+      if (!loggedIn) dispatch({ type: "SET_LOGGED_IN" });
+      if (shouldInject) webViewRef.current?.injectJavaScript(autoSubmitFirstSemesterScript);
+    } else if (url.includes("studentsubjects.php") && shouldInject) {
+      webViewRef.current?.injectJavaScript(selectSubjectByIndexScript(currentIndex));
+    } else if (url.includes("studentsubatt.php") && shouldInject) {
+      webViewRef.current?.injectJavaScript(parseDetailedAttendanceAndGoHomeScript);
+    }
+  }, []);
 
   const handleMessage = useCallback((event: WebViewMessageEvent) => {
     try {
       const payload = JSON.parse(event.nativeEvent.data) as MessagePayload;
       lastActivityRef.current = Date.now();
-
       switch (payload.type) {
-        case "STUDENT_INFO":
-          dispatch({ type: "SET_STUDENT_INFO", data: payload.data });
-          break;
-        case "SUBJECT_COUNT":
-          dispatch({ type: "SET_SUBJECT_COUNT", count: payload.count });
-          break;
-        case "ATTENDANCE_ITEM":
-          dispatch({ type: "ADD_ATTENDANCE_ITEM", data: payload.data });
-          break;
-        case "SCRAPING_COMPLETE":
-          dispatch({ type: "SET_SCRAPING_FINISHED" });
-          break;
+        case "STUDENT_INFO": dispatch({ type: "SET_STUDENT_INFO", data: payload.data }); break;
+        case "SUBJECT_COUNT": dispatch({ type: "SET_SUBJECT_COUNT", count: payload.count }); break;
+        case "ATTENDANCE_ITEM": dispatch({ type: "ADD_ATTENDANCE_ITEM", data: payload.data }); break;
+        case "SCRAPING_COMPLETE": dispatch({ type: "SET_SCRAPING_FINISHED" }); break;
       }
     } catch (err) {
       console.warn("WebView Message Error:", err);
     }
   }, []);
 
-  // Aggregation Math
-  const overallClasses = subjectsData.reduce((sum, s) => sum + s.total, 0);
-  const overallPresent = subjectsData.reduce((sum, s) => sum + s.present, 0);
-  const overallAbsent = subjectsData.reduce((sum, s) => sum + s.absent, 0);
-  const overallPercentageVal =
-    overallClasses > 0 ? (overallPresent / overallClasses) * 100 : 0;
+  /* Aggregation math */
+  const { overallClasses, overallPresent, overallAbsent } = subjectsData.reduce(
+    (acc, x) => ({
+      overallClasses: acc.overallClasses + x.total,
+      overallPresent: acc.overallPresent + x.present,
+      overallAbsent: acc.overallAbsent + x.absent,
+    }),
+    { overallClasses: 0, overallPresent: 0, overallAbsent: 0 },
+  );
+  const overallPercentageVal = overallClasses > 0 ? (overallPresent / overallClasses) * 100 : 0;
   const overallPercentage = overallPercentageVal.toFixed(1);
   const isShortage = overallPercentageVal < 75;
+  const maxOverallSkippable = Math.max(0, Math.floor((4 * overallPresent - 3 * overallClasses) / 3));
+  const calculateCanSkip = (p: number, t: number): number =>
+    Math.min(Math.max(0, Math.floor((4 * p - 3 * t) / 3)), maxOverallSkippable);
 
-  // Maximum skippable classes across all combined subjects
-  const maxOverallSkippable = Math.max(
-    0,
-    Math.floor((4 * overallPresent - 3 * overallClasses) / 3)
-  );
-
-  // Dual-constraint class skipping logic
-  const calculateCanSkip = (subjectPresent: number, subjectTotal: number): number => {
-    const subjectSkippable = Math.max(
-      0,
-      Math.floor((4 * subjectPresent - 3 * subjectTotal) / 3)
-    );
-    return Math.min(subjectSkippable, maxOverallSkippable);
-  };
-
+  /* Persist latest result */
   useEffect(() => {
     let cancelled = false;
     void (async () => {
       const result = await loadPreviousResult();
       if (!cancelled) dispatch({ type: "SET_PREVIOUS_RESULT", result });
     })();
-    return () => {
-      cancelled = true;
-    };
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {
-    if (
-      !(isScrapingFinished && isLoggedIn && studentInfo && subjectsData.length > 0)
-    ) {
-      return;
-    }
+    if (!(isScrapingFinished && isLoggedIn && studentInfo && subjectsData.length > 0)) return;
     const sig = `${studentInfo.name}|${subjectsData.length}|${overallClasses}|${overallPresent}`;
     if (persistedSigRef.current === sig) return;
     persistedSigRef.current = sig;
-    // Persist only the most recently viewed result; writing overwrites any older stored entry.
     const latestResult: PreviousAttendanceResult = { studentInfo, subjectsData };
     void savePreviousResult(latestResult);
-    // Keep in-memory previousResult in sync so the "Previous Attendance" button
-    // shows the latest result after navigating back.
     dispatch({ type: "SET_PREVIOUS_RESULT", result: latestResult });
-  }, [
-    isScrapingFinished,
-    isLoggedIn,
-    studentInfo,
-    subjectsData,
-    overallClasses,
-    overallPresent,
-  ]);
+  }, [isScrapingFinished, isLoggedIn, studentInfo, subjectsData, overallClasses, overallPresent]);
 
+  /* Stall detection */
   useEffect(() => {
-    if (!isLoggedIn || isScrapingFinished) {
-      return;
-    }
+    if (!isLoggedIn || isScrapingFinished) return;
     lastActivityRef.current = Date.now();
     const interval = setInterval(() => {
       if (Date.now() - lastActivityRef.current > STALL_TIMEOUT_MS) {
@@ -338,19 +397,21 @@ export default function Index() {
     return () => clearInterval(interval);
   }, [isLoggedIn, isScrapingFinished]);
 
+  const syncPct = totalSubjects ? Math.round((fetchedIndices.length / totalSubjects) * 100) : 0;
+
   return (
     <View style={styles.container}>
-      {update.status === "checking" || update.status === "applying" ? (
+      {(update.status === "checking" || update.status === "applying") && (
         <View style={styles.updateBanner}>
           <Text style={styles.updateBannerText}>
-            {update.status === "applying"
-              ? "Applying update…"
-              : "Checking for updates…"}
+            {update.status === "applying" ? "Applying update…" : "Checking for updates…"}
           </Text>
         </View>
-      ) : null}
+      )}
 
-      <View style={!isLoggedIn ? styles.fullWebView : styles.hiddenWebView}>
+      {/* WebView stays full-size until scraping is done — overlays sit ON TOP,
+          so the portal page can never flash through while loading. */}
+      <View style={isScrapingFinished ? styles.hiddenWebView : styles.fullWebView}>
         <WebView
           key={webViewKey}
           ref={webViewRef}
@@ -361,237 +422,167 @@ export default function Index() {
           domStorageEnabled
           incognito={false}
         />
-
         {!isLoggedIn && hasPreviousResult && (
-          <TouchableOpacity
-            style={styles.prevAttendanceBtn}
-            onPress={handlePreviousAttendance}
-          >
-            <Text style={styles.prevAttendanceBtnText}>Previous Attendance</Text>
+          <TouchableOpacity style={styles.prevBtn} onPress={handlePreviousAttendance} activeOpacity={0.88}>
+            <Text style={styles.prevBtnIcon}>↺</Text>
+            <Text style={styles.prevBtnText}>Previous Attendance</Text>
           </TouchableOpacity>
         )}
       </View>
 
-      {/* Sync Loader Overlay */}
+      {/* ---------- SYNC · opaque overlay, no webpage flash ---------- */}
       {isLoggedIn && !isScrapingFinished && !isSelectionError && (
-        <View style={styles.loadingContainer}>
-          <View style={styles.loadingCard}>
-            <ActivityIndicator size="large" color={COLORS.primary} />
-            <Text style={styles.loadingTitle}>Syncing Attendance</Text>
-            <Text style={styles.loadingSubtext}>
-              {totalSubjects
-                ? `Processed ${fetchedIndices.length} of ${totalSubjects} subjects`
-                : "Authenticating session..."}
-            </Text>
-            <View style={styles.loaderBadge}>
-              <Text style={styles.loaderBadgeText}>
-                {totalSubjects
-                  ? `${Math.round((fetchedIndices.length / totalSubjects) * 100)}% Complete`
-                  : "Connecting..."}
-              </Text>
-            </View>
-          </View>
+        <View style={styles.overlayFull}>
+          <CrabScene />
+          <Text style={styles.syncEyebrow}>SYNCING</Text>
+          <Text style={styles.syncTitle}>{"Reading your\nsemester"}</Text>
+          <Text style={styles.syncSub}>
+            {totalSubjects ? `Processed ${fetchedIndices.length} of ${totalSubjects} subjects` : "Authenticating session…"}
+          </Text>
+          <Text style={styles.syncPct}>
+            {syncPct}
+            <Text style={styles.syncPctSign}>%</Text>
+          </Text>
+          <Text style={styles.syncFine}>Secure session · jntuaceastudents.classattendance.in</Text>
         </View>
       )}
 
-      {/* Selection Error Overlay */}
+      {/* ---------- SELECTION ERROR · opaque overlay ---------- */}
       {isSelectionError && isLoggedIn && !isScrapingFinished && (
-        <View style={styles.loadingContainer}>
+        <View style={styles.overlayFull}>
           <View style={styles.errorCard}>
-            <TouchableOpacity
-              style={[styles.modalCloseIcon, styles.errorCloseIcon]}
-              onPress={() => dispatch({ type: "CLEAR_SELECTION_ERROR" })}
-            >
+            <TouchableOpacity style={styles.closeIcon} onPress={() => dispatch({ type: "CLEAR_SELECTION_ERROR" })}>
               <Text style={styles.closeIconText}>✕</Text>
             </TouchableOpacity>
-            <Text style={styles.errorIcon}>⚠</Text>
+            <Text style={styles.errorIcon}>!</Text>
             <Text style={styles.errorTitle}>Couldn’t load subjects right now</Text>
             <Text style={styles.errorBody}>
-              The attendance portal was recently updated, so the app can’t detect
-              your semester or subjects at the moment. This is a temporary issue
-              — we’re working on a fix.
+              The attendance portal was recently updated, so the app can’t detect your semester or
+              subjects at the moment. This is a temporary issue — we’re working on a fix.
             </Text>
-            <TouchableOpacity
-              style={styles.errorTryAgainBtn}
-              onPress={handleFullReset}
-            >
-              <Text style={styles.errorTryAgainText}>Try again</Text>
+            <TouchableOpacity style={styles.errorBtn} onPress={handleFullReset}>
+              <Text style={styles.errorBtnText}>Try again</Text>
             </TouchableOpacity>
           </View>
         </View>
       )}
 
-      {/* Final Dashboard View */}
+      {/* ---------- DASHBOARD · profile + overall scroll with the list ---------- */}
       {isLoggedIn && isScrapingFinished && (
         <View style={styles.dashboardContainer}>
-          {/* Header Bar */}
-          <View style={styles.topBar}>
-            <View>
-              <Text style={styles.brandTitle}>Attendance Tracker</Text>
-              <Text style={styles.brandSub}>by chanikya</Text>
+          <View style={styles.sigRow}>
+            <View style={styles.wordmark}>
+              <Spike />
+              <Text style={styles.wordmarkText}>Chanikya</Text>
+              <Text style={styles.wordmarkRole}>·dev</Text>
             </View>
-            <TouchableOpacity style={styles.resetBtn} onPress={handleFullReset}>
-              <Text style={styles.resetBtnText}>Back</Text>
+            <TouchableOpacity style={styles.iconBtn} onPress={handleFullReset} activeOpacity={0.7}>
+              <Text style={styles.iconBtnText}>↺</Text>
             </TouchableOpacity>
           </View>
 
-          {/* Student Profile Banner */}
-          {studentInfo && (
-            <View style={styles.profileHero}>
-              <View style={styles.avatarCircle}>
-                <Text style={styles.avatarText}>
-                  {studentInfo.name ? studentInfo.name.charAt(0) : "S"}
-                </Text>
-              </View>
-              <View style={styles.profileTextContainer}>
-                <Text style={styles.studentNameText}>{studentInfo.name}</Text>
-                <Text style={styles.studentMetaText}>
-                  {studentInfo.admissionNo} • {studentInfo.className}
-                </Text>
-              </View>
-            </View>
-          )}
-
-          {/* Overall Summary Card */}
-          <View
-            style={[
-              styles.overallCard,
-              isShortage ? styles.overallDangerBg : styles.overallSafeBg,
-            ]}
-          >
-            <View style={styles.overallHeaderRow}>
-              <Text style={styles.overallCardTitle}>Overall Status</Text>
-              <View
-                style={[
-                  styles.statusChip,
-                  isShortage ? styles.chipDanger : styles.chipSafe,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.statusChipText,
-                    isShortage ? styles.chipDangerText : styles.chipSafeText,
-                  ]}
-                >
-                  {isShortage ? "Shortage Warning" : "Good Standing"}
-                </Text>
-              </View>
-            </View>
-
-            <View style={styles.overallMainStatRow}>
-              <Text style={styles.overallScoreText}>{overallPercentage}%</Text>
-
-              <View style={styles.overallMiniGrid}>
-                <View style={styles.miniGridBox}>
-                  <Text style={styles.miniGridNum}>{overallClasses}</Text>
-                  <Text style={styles.miniGridLabel}>Total</Text>
-                </View>
-                <View style={styles.miniGridBox}>
-                  <Text style={[styles.miniGridNum, { color: COLORS.success }]}>
-                    {overallPresent}
-                  </Text>
-                  <Text style={styles.miniGridLabel}>Attended</Text>
-                </View>
-                <View style={styles.miniGridBox}>
-                  <Text style={[styles.miniGridNum, { color: COLORS.danger }]}>
-                    {overallAbsent}
-                  </Text>
-                  <Text style={styles.miniGridLabel}>Missed</Text>
-                </View>
-              </View>
-            </View>
-
-            {/* Overall Capacity Banner */}
-            <View style={styles.skipAllowanceBanner}>
-              <Text style={styles.skipAllowanceLabel}>Overall Skip Capacity:</Text>
-              <View
-                style={[
-                  styles.skipPill,
-                  maxOverallSkippable > 0 ? styles.skipPillSafe : styles.skipPillMuted,
-                ]}
-              >
-                <Text
-                  style={[
-                    styles.skipPillText,
-                    maxOverallSkippable > 0
-                      ? styles.skipPillTextSafe
-                      : styles.skipPillTextMuted,
-                  ]}
-                >
-                  can skip : {maxOverallSkippable}
-                </Text>
-              </View>
-            </View>
-          </View>
-
-          {/* Subject Items List */}
           <FlatList
+            style={{ flex: 1 }}
             data={subjectsData}
             keyExtractor={(item, index) => `${item.subjectName}-${index}`}
             showsVerticalScrollIndicator={false}
-            contentContainerStyle={{ paddingBottom: 20 }}
+            contentContainerStyle={{ paddingBottom: 16 }}
+            ListHeaderComponent={
+              <View>
+                {studentInfo && (
+                  <View style={styles.profileCard}>
+                    <Text style={styles.profileName} numberOfLines={1}>{studentInfo.name}</Text>
+                    <View style={styles.profileMetaRow}>
+                      <View style={styles.liveDot} />
+                      <Text style={styles.profileMeta} numberOfLines={1}>
+                        {studentInfo.admissionNo} • {studentInfo.className}
+                      </Text>
+                    </View>
+                  </View>
+                )}
+
+                <View style={styles.overallCard}>
+                  <View style={styles.overallTopRow}>
+                    <Text style={styles.eyebrowSm}>OVERALL ATTENDANCE</Text>
+                    <View style={styles.badgePill}>
+                      <Text style={styles.badgePillText}>{isShortage ? "Shortage" : "Semester 1"}</Text>
+                    </View>
+                  </View>
+                  <Text style={styles.bigPct}>
+                    {overallPercentage}
+                    <Text style={styles.bigPctSign}>%</Text>
+                  </Text>
+                  <View style={styles.miniStats}>
+                    <View style={styles.miniStat}>
+                      <Text style={styles.miniStatNum}>{overallClasses}</Text>
+                      <Text style={styles.miniStatLabel}>TOT</Text>
+                    </View>
+                    <View style={styles.miniDivider} />
+                    <View style={styles.miniStat}>
+                      <Text style={styles.miniStatNum}>{overallPresent}</Text>
+                      <Text style={styles.miniStatLabel}>ATT</Text>
+                    </View>
+                    <View style={styles.miniDivider} />
+                    <View style={styles.miniStat}>
+                      <Text style={styles.miniStatNum}>{overallAbsent}</Text>
+                      <Text style={styles.miniStatLabel}>ABS</Text>
+                    </View>
+                  </View>
+                  <View style={styles.skipRow}>
+                    <View>
+                      <Text style={styles.skipTitle}>Overall Safe to skip</Text>
+                      <Text style={styles.skipSub}>while staying above 75%</Text>
+                    </View>
+                    <View style={[styles.badgeCoral, maxOverallSkippable <= 0 && styles.badgeMute]}>
+                      <Text style={[styles.badgeCoralText, maxOverallSkippable <= 0 && styles.badgeMuteText]}>
+                        {maxOverallSkippable} {maxOverallSkippable === 1 ? "class" : "classes"}
+                      </Text>
+                    </View>
+                  </View>
+                </View>
+
+                <View style={styles.listHead}>
+                  <Text style={styles.eyebrowSm}>SUBJECTS</Text>
+                  <Text style={styles.listCount}>{subjectsData.length}</Text>
+                </View>
+              </View>
+            }
+            ListFooterComponent={
+              <View style={styles.footBand}>
+                <Spike size={15} color={COLORS.onDark} />
+                <Text style={styles.footTitle}>Open to Contribute</Text>
+                <Text style={styles.footSub}>{"Found a bug or have an idea?\nThis app is open source."}</Text>
+                <TouchableOpacity style={styles.btnCoral} activeOpacity={0.85} onPress={() => Linking.openURL(GITHUB_URL)}>
+                  <Text style={styles.btnCoralText}>View on GitHub</Text>
+                </TouchableOpacity>
+                <Text style={styles.footCredit}>
+                  Crafted by <Text style={styles.footCreditName}>J Chanikya</Text> · 2026
+                </Text>
+              </View>
+            }
             renderItem={({ item }) => {
               const pVal = parseFloat(item.percentage);
               const isLow = pVal < 75;
               const canSkip = calculateCanSkip(item.present, item.total);
-
               return (
                 <TouchableOpacity
                   activeOpacity={0.8}
-                  style={[
-                    styles.modernSubjectCard,
-                    isLow ? styles.cardLowBg : styles.cardNormalBg,
-                  ]}
+                  style={styles.subjectCard}
                   onPress={() => dispatch({ type: "SET_SELECTED_SUBJECT", data: item })}
                 >
-                  <View style={styles.cardHeaderLine}>
-                    <Text style={styles.subjectTitle} numberOfLines={2}>
-                      {item.subjectName}
-                    </Text>
-
-                    <Text
-                      style={[
-                        styles.percentageText,
-                        isLow ? styles.badgeDangerText : styles.badgeSafeText,
-                      ]}
-                    >
-                      {item.percentage}%
-                    </Text>
+                  <View style={styles.subjectRow1}>
+                    <Text style={styles.subjectName} numberOfLines={2}>{item.subjectName}</Text>
+                    <Text style={[styles.subjectPct, isLow && styles.subjectPctLow]}>{item.percentage}%</Text>
                   </View>
-
-                  {/* Stat Pills & Can Skip Indicator */}
-                  <View style={styles.cardFooterStats}>
-                    <View style={styles.statPillsContainer}>
-                      <View style={styles.miniStatPill}>
-                        <Text style={styles.miniStatPillLabel}>
-                          Tot: <Text style={styles.boldDark}>{item.total}</Text>
-                        </Text>
-                      </View>
-                      <View style={styles.miniStatPill}>
-                        <Text style={styles.miniStatPillLabel}>
-                          Att: <Text style={styles.footerPresentText}>{item.present}</Text>
-                        </Text>
-                      </View>
-                      <View style={styles.miniStatPill}>
-                        <Text style={styles.miniStatPillLabel}>
-                          Abs: <Text style={styles.footerAbsentText}>{item.absent}</Text>
-                        </Text>
-                      </View>
-                    </View>
-
-                    <View
-                      style={[
-                        styles.canSkipTag,
-                        canSkip > 0 ? styles.canSkipSafe : styles.canSkipMuted,
-                      ]}
-                    >
-                      <Text
-                        style={[
-                          styles.canSkipText,
-                          canSkip > 0 ? styles.canSkipSafeText : styles.canSkipMutedText,
-                        ]}
-                      >
-                        can skip : {canSkip}
+                  <View style={styles.subjectRow2}>
+                    <Text style={styles.shortStats}>
+                      Tot <Text style={styles.shortStatsBold}>{item.total}</Text>
+                      {" · "}Att <Text style={styles.shortStatsBold}>{item.present}</Text>
+                      {" · "}Abs <Text style={styles.shortStatsBold}>{item.absent}</Text>
+                    </Text>
+                    <View style={[styles.badgeCoral, canSkip <= 0 && styles.badgeMute]}>
+                      <Text style={[styles.badgeCoralText, canSkip <= 0 && styles.badgeMuteText]}>
+                        {canSkip > 0 ? `skip ${canSkip}` : "Shortage"}
                       </Text>
                     </View>
                   </View>
@@ -602,7 +593,7 @@ export default function Index() {
         </View>
       )}
 
-      {/* Date Log Modal */}
+      {/* ---------- DATE LOG SHEET ---------- */}
       <Modal
         visible={!!selectedSubject}
         animationType="fade"
@@ -613,21 +604,18 @@ export default function Index() {
           <View style={styles.modalSheet}>
             {selectedSubject && (
               <>
+                <View style={styles.modalHandle} />
                 <View style={styles.modalHeader}>
-                  <View style={styles.modalTitleContainer}>
-                    <Text style={styles.modalSubjectTitle}>
-                      {selectedSubject.subjectName}
+                  <View style={{ flex: 1, marginRight: 12 }}>
+                    <Text style={styles.modalTitle} numberOfLines={2}>{selectedSubject.subjectName}</Text>
+                    <Text style={styles.modalSub}>
+                      Attendance log · {selectedSubject.present} attended, {selectedSubject.absent} missed
                     </Text>
-                    <Text style={styles.modalSubjectSub}>Attendance Log</Text>
                   </View>
-                  <TouchableOpacity
-                    style={styles.modalCloseIcon}
-                    onPress={() => dispatch({ type: "SET_SELECTED_SUBJECT", data: null })}
-                  >
+                  <TouchableOpacity style={styles.closeIcon} onPress={() => dispatch({ type: "SET_SELECTED_SUBJECT", data: null })}>
                     <Text style={styles.closeIconText}>✕</Text>
                   </TouchableOpacity>
                 </View>
-
                 <FlatList
                   data={selectedSubject.records}
                   keyExtractor={(_, index) => index.toString()}
@@ -636,27 +624,11 @@ export default function Index() {
                     <View style={styles.logRow}>
                       <View>
                         <Text style={styles.logDate}>{item.date}</Text>
-                        <Text style={styles.logTime}>{item.time}</Text>
+                        {!!item.time && <Text style={styles.logTime}>{item.time}</Text>}
                       </View>
-                      <View
-                        style={[
-                          styles.logBadge,
-                          item.status === "Present"
-                            ? styles.logBadgePresent
-                            : item.status === "Absent"
-                              ? styles.logBadgeAbsent
-                              : styles.logBadgeUnknown,
-                        ]}
-                      >
+                      <View style={styles.logBadge}>
                         <Text
-                          style={[
-                            styles.logBadgeText,
-                            item.status === "Present"
-                              ? styles.logTextPresent
-                              : item.status === "Absent"
-                                ? styles.logTextAbsent
-                                : styles.logTextUnknown,
-                          ]}
+                          style={[styles.logBadgeText, { color: STATUS_COLOR[item.status] }]}
                         >
                           {item.status}
                         </Text>
@@ -674,283 +646,157 @@ export default function Index() {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: COLORS.bg, paddingTop: 40 },
+  container: { flex: 1, backgroundColor: COLORS.canvas, paddingTop: 40 },
+
   updateBanner: {
-    backgroundColor: COLORS.primaryLight,
+    backgroundColor: COLORS.surfaceCard,
     paddingVertical: 6,
     paddingHorizontal: 16,
     alignItems: "center",
+    borderBottomWidth: 1,
+    borderBottomColor: COLORS.hairline,
   },
-  updateBannerText: { fontSize: 12, fontWeight: "600", color: COLORS.primary },
+  updateBannerText: { fontSize: 12, fontWeight: "600", color: COLORS.primaryActive, letterSpacing: 0.3 },
+
   hiddenWebView: { width: 0, height: 0, overflow: "hidden" },
   fullWebView: { flex: 1 },
 
-  /* Previous Attendance Overlay Button */
-  prevAttendanceBtn: {
+  /* Previous attendance — floating coral pill, lifted off the bottom */
+  prevBtn: {
     position: "absolute",
-    bottom: 36,
-    left: 0,
-    right: 0,
-    alignSelf: "center",
+    bottom: 56,
+    left: 28,
+    right: 28,
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     backgroundColor: COLORS.primary,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-    borderRadius: 14,
-    elevation: 4,
-    alignItems: "center",
+    paddingVertical: 14,
+    borderRadius: 9999,
+    elevation: 6,
+    shadowColor: "#181715",
+    shadowOpacity: 0.25,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 6 },
   },
-  prevAttendanceBtnText: { color: COLORS.white, fontWeight: "700", fontSize: 13 },
+  prevBtnIcon: { color: COLORS.onDark, fontSize: 16, fontWeight: "700", marginRight: 8 },
+  prevBtnText: { color: COLORS.onDark, fontWeight: "600", fontSize: 14, letterSpacing: 0.2 },
 
-  /* Loader */
-  loadingContainer: { flex: 1, justifyContent: "center", alignItems: "center", padding: 24 },
-  loadingCard: {
-    width: "100%",
-    backgroundColor: COLORS.white,
-    padding: 28,
-    borderRadius: 20,
+  /* Opaque full-screen overlays — kill the webpage flash */
+  overlayFull: {
+    ...StyleSheet.absoluteFillObject,
+    zIndex: 10,
+    backgroundColor: COLORS.canvas,
     alignItems: "center",
-    elevation: 3,
-    borderWidth: 1,
-    borderColor: COLORS.border,
+    justifyContent: "center",
+    paddingHorizontal: 28,
   },
-  loadingTitle: { fontSize: 18, fontWeight: "700", color: COLORS.ink, marginTop: 16 },
-  loadingSubtext: { fontSize: 13, color: COLORS.slate, marginTop: 6, marginBottom: 16 },
-  loaderBadge: {
-    backgroundColor: COLORS.primaryLight,
-    paddingHorizontal: 14,
-    paddingVertical: 6,
-    borderRadius: 12,
-  },
-  loaderBadgeText: { fontSize: 12, fontWeight: "700", color: COLORS.primary },
 
-  /* Selection Error Overlay */
+  syncEyebrow: { fontSize: 11, fontWeight: "500", letterSpacing: 1.6, color: COLORS.primary, marginTop: 20 },
+  syncTitle: { fontFamily: SERIF, fontSize: 26, letterSpacing: -0.5, color: COLORS.ink, lineHeight: 31, marginTop: 10, textAlign: "center" },
+  syncSub: { fontSize: 12.5, color: COLORS.muted, marginTop: 8 },
+  syncPct: { fontFamily: SERIF, fontSize: 54, letterSpacing: -2, color: COLORS.primary, lineHeight: 60, marginTop: 16 },
+  syncPctSign: { fontSize: 24, color: COLORS.mutedSoft },
+  syncFine: { fontSize: 10.5, color: COLORS.mutedSoft, marginTop: 14, letterSpacing: 0.3 },
+
   errorCard: {
     width: "100%",
-    backgroundColor: COLORS.white,
-    padding: 28,
-    borderRadius: 20,
-    alignItems: "center",
-    elevation: 3,
+    backgroundColor: COLORS.canvas,
     borderWidth: 1,
-    borderColor: COLORS.dangerSoftBorder,
-    borderLeftWidth: 6,
-    borderLeftColor: COLORS.danger,
-  },
-  errorIcon: { fontSize: 28, color: COLORS.dangerDark, marginBottom: 8, textAlign: "center" },
-  errorTitle: { fontSize: 17, fontWeight: "700", color: COLORS.ink, marginTop: 4, textAlign: "center" },
-  errorBody: { fontSize: 13, color: COLORS.slate, marginTop: 8, textAlign: "center", lineHeight: 18 },
-  errorCloseIcon: { position: "absolute", top: 12, right: 12 },
-  errorTryAgainBtn: {
-    backgroundColor: COLORS.danger,
-    paddingHorizontal: 22,
-    paddingVertical: 12,
-    borderRadius: 14,
-    elevation: 4,
+    borderColor: COLORS.hairline,
+    borderRadius: 12,
+    padding: 24,
     alignItems: "center",
-    marginTop: 16,
-    width: "100%",
   },
-  errorTryAgainText: { color: COLORS.white, fontWeight: "700", fontSize: 13 },
+  errorIcon: {
+    width: 34, height: 34, borderRadius: 17, backgroundColor: COLORS.error, color: COLORS.onDark,
+    fontSize: 20, fontWeight: "700", textAlign: "center", lineHeight: 34, overflow: "hidden",
+  },
+  errorTitle: { fontFamily: SERIF, fontSize: 19, letterSpacing: -0.3, color: COLORS.ink, marginTop: 12, textAlign: "center" },
+  errorBody: { fontSize: 13, lineHeight: 19, color: COLORS.muted, marginTop: 8, textAlign: "center" },
+  errorBtn: { backgroundColor: COLORS.error, borderRadius: 8, paddingVertical: 12, alignSelf: "stretch", alignItems: "center", marginTop: 16 },
+  errorBtnText: { color: COLORS.onDark, fontWeight: "600", fontSize: 14 },
+  closeIcon: {
+    width: 32, height: 32, borderRadius: 16, borderWidth: 1, borderColor: COLORS.hairline,
+    backgroundColor: COLORS.canvas, alignItems: "center", justifyContent: "center",
+  },
+  closeIconText: { fontSize: 13, color: COLORS.body, fontWeight: "600" },
 
   /* Dashboard */
   dashboardContainer: { flex: 1, paddingHorizontal: 20 },
-  topBar: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
+  sigRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 10, marginBottom: 4 },
+  wordmark: { flexDirection: "row", alignItems: "center" },
+  wordmarkText: { fontFamily: SERIF, fontStyle: "italic", fontSize: 23, letterSpacing: -0.4, color: COLORS.ink, marginLeft: 8 },
+  wordmarkRole: { fontSize: 10, fontWeight: "500", letterSpacing: 1.4, color: COLORS.mutedSoft, marginLeft: 7, marginTop: 4 },
+  iconBtn: {
+    width: 34, height: 34, borderRadius: 17, backgroundColor: COLORS.canvas,
+    borderWidth: 1, borderColor: COLORS.hairline, alignItems: "center", justifyContent: "center",
   },
-  brandTitle: { fontSize: 20, fontWeight: "800", color: COLORS.ink },
-  brandSub: { fontSize: 12, color: COLORS.slate, marginTop: 2, fontWeight: "600" },
-  resetBtn: {
-    backgroundColor: COLORS.chipDangerBg,
-    paddingHorizontal: 16,
-    paddingVertical: 8,
-    borderRadius: 10,
-    borderWidth: 1,
-    borderColor: COLORS.dangerSoftBorder,
-  },
-  resetBtnText: { color: COLORS.dangerDark, fontWeight: "700", fontSize: 12 },
+  iconBtnText: { fontSize: 15, color: COLORS.body, fontWeight: "600" },
 
-  /* Student Profile Card */
-  profileHero: {
-    backgroundColor: COLORS.profileBg,
-    borderRadius: 16,
-    padding: 16,
-    flexDirection: "row",
-    alignItems: "center",
-    marginBottom: 16,
-    borderWidth: 1,
-    borderColor: COLORS.profileBorder,
-  },
-  avatarCircle: {
-    width: 44,
-    height: 44,
-    borderRadius: 22,
-    backgroundColor: COLORS.avatarBg,
-    justifyContent: "center",
-    alignItems: "center",
-    marginRight: 14,
-  },
-  avatarText: { color: COLORS.white, fontWeight: "800", fontSize: 18 },
-  profileTextContainer: { flex: 1 },
-  studentNameText: { color: COLORS.white, fontWeight: "700", fontSize: 16 },
-  studentMetaText: { color: "#CBD5E1", fontSize: 12, marginTop: 2 },
+  profileCard: { backgroundColor: COLORS.surfaceDark, borderRadius: 12, padding: 18, marginBottom: 12 },
+  profileName: { fontFamily: SERIF, fontSize: 24, letterSpacing: -0.5, color: COLORS.onDark },
+  profileMetaRow: { flexDirection: "row", alignItems: "center", marginTop: 6 },
+  liveDot: { width: 7, height: 7, borderRadius: 4, backgroundColor: COLORS.live, marginRight: 7 },
+  profileMeta: { fontSize: 12.5, color: COLORS.onDarkSoft },
 
-  /* Overall Summary Card */
-  overallCard: {
-    borderRadius: 18,
-    padding: 18,
-    marginBottom: 18,
-    borderWidth: 1,
-    elevation: 1,
-  },
-  overallSafeBg: { backgroundColor: COLORS.white, borderColor: COLORS.border },
-  overallDangerBg: { backgroundColor: COLORS.dangerSoftBg, borderColor: COLORS.dangerSoftBorder },
-  overallHeaderRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  overallCardTitle: { fontSize: 13, fontWeight: "600", color: COLORS.slate },
-  statusChip: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 20 },
-  chipSafe: { backgroundColor: COLORS.chipSafeBg },
-  chipDanger: { backgroundColor: COLORS.chipDangerBg },
-  statusChipText: { fontSize: 11, fontWeight: "700" },
-  chipSafeText: { color: COLORS.successDark },
-  chipDangerText: { color: COLORS.dangerDark },
-  overallMainStatRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginVertical: 14,
-  },
-  overallScoreText: { fontSize: 32, fontWeight: "800", color: COLORS.ink },
-  overallMiniGrid: { flexDirection: "row", gap: 14 },
-  miniGridBox: { alignItems: "center" },
-  miniGridNum: { fontSize: 15, fontWeight: "700", color: COLORS.ink },
-  miniGridLabel: { fontSize: 11, color: COLORS.slate, marginTop: 2 },
-  skipAllowanceBanner: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingTop: 12,
-    borderTopWidth: 1,
-    borderTopColor: COLORS.border,
-  },
-  skipAllowanceLabel: { fontSize: 12, fontWeight: "600", color: COLORS.slate },
-  skipPill: { paddingHorizontal: 10, paddingVertical: 4, borderRadius: 8 },
-  skipPillSafe: { backgroundColor: COLORS.chipSafeBg },
-  skipPillMuted: { backgroundColor: COLORS.trackBg },
-  skipPillText: { fontSize: 11, fontWeight: "800" },
-  skipPillTextSafe: { color: COLORS.successDark },
-  skipPillTextMuted: { color: COLORS.slate },
+  overallCard: { backgroundColor: COLORS.surfaceCard, borderRadius: 12, padding: 20, marginBottom: 12 },
+  overallTopRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginBottom: 6 },
+  eyebrowSm: { fontSize: 10.5, fontWeight: "500", letterSpacing: 1.5, color: COLORS.muted },
+  badgePill: { backgroundColor: COLORS.creamStrong, borderRadius: 9999, paddingHorizontal: 12, paddingVertical: 4 },
+  badgePillText: { fontSize: 11, fontWeight: "500", color: COLORS.ink },
+  bigPct: { fontFamily: SERIF, fontSize: 52, letterSpacing: -1.5, color: COLORS.ink, lineHeight: 56, marginVertical: 4 },
+  bigPctSign: { fontSize: 24, color: COLORS.muted },
+  miniStats: { flexDirection: "row", borderTopWidth: 1, borderTopColor: COLORS.hairline, paddingTop: 12, marginTop: 8 },
+  miniStat: { flex: 1, alignItems: "center" },
+  miniStatNum: { fontFamily: SERIF, fontSize: 18, color: COLORS.body },
+  miniStatLabel: { fontSize: 9.5, fontWeight: "500", letterSpacing: 1.2, color: COLORS.muted, marginTop: 3 },
+  miniDivider: { width: 1, backgroundColor: COLORS.hairlineSoft },
+  skipRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", borderTopWidth: 1, borderTopColor: COLORS.hairline, marginTop: 12, paddingTop: 12 },
+  skipTitle: { fontSize: 13, fontWeight: "500", color: COLORS.body },
+  skipSub: { fontSize: 10.5, color: COLORS.muted, marginTop: 2 },
 
-  /* Subject Card */
-  modernSubjectCard: {
-    borderRadius: 16,
-    padding: 16,
-    marginBottom: 12,
-    borderWidth: 1,
-    elevation: 1,
-  },
-  cardNormalBg: {
-    backgroundColor: COLORS.white,
-    borderColor: COLORS.border,
-  },
-  cardLowBg: {
-    backgroundColor: COLORS.dangerSoftBg,
-    borderColor: COLORS.dangerSoftBorder,
-  },
-  cardHeaderLine: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 12,
-  },
-  subjectTitle: { flex: 1, fontSize: 15, fontWeight: "700", color: COLORS.ink, marginRight: 10 },
-  percentageText: { fontSize: 18, fontWeight: "800" },
-  badgeSafeText: { color: COLORS.successDark },
-  badgeDangerText: { color: COLORS.dangerDark },
-  cardFooterStats: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-  },
-  statPillsContainer: { flexDirection: "row", gap: 6 },
-  miniStatPill: {
-    backgroundColor: COLORS.white,
-    paddingHorizontal: 8,
-    paddingVertical: 3,
-    borderRadius: 6,
-    borderWidth: 1,
-    borderColor: COLORS.border,
-  },
-  miniStatPillLabel: { fontSize: 11, color: COLORS.slate },
-  footerPresentText: { color: COLORS.success, fontWeight: "700" },
-  footerAbsentText: { color: COLORS.danger, fontWeight: "700" },
-  boldDark: { color: COLORS.ink, fontWeight: "700" },
-  canSkipTag: {
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
-  },
-  canSkipSafe: { backgroundColor: COLORS.chipSafeBg },
-  canSkipMuted: { backgroundColor: COLORS.trackBg },
-  canSkipText: { fontSize: 11, fontWeight: "800" },
-  canSkipSafeText: { color: COLORS.successDark },
-  canSkipMutedText: { color: COLORS.slate },
+  badgeCoral: { backgroundColor: COLORS.primary, borderRadius: 9999, paddingHorizontal: 12, paddingVertical: 5 },
+  badgeCoralText: { fontSize: 11, fontWeight: "500", letterSpacing: 0.4, color: COLORS.onDark },
+  badgeMute: { backgroundColor: COLORS.creamStrong },
+  badgeMuteText: { color: COLORS.muted },
 
-  /* Modal Sheet */
-  modalBackdrop: {
-    flex: 1,
-    backgroundColor: COLORS.overlay,
-    justifyContent: "flex-end",
+  listHead: { flexDirection: "row", justifyContent: "space-between", alignItems: "baseline", marginVertical: 8, paddingHorizontal: 2 },
+  listCount: { fontSize: 12, color: COLORS.mutedSoft },
+
+  subjectCard: {
+    backgroundColor: COLORS.canvas, borderWidth: 1, borderColor: COLORS.hairline,
+    borderRadius: 12, padding: 16, marginBottom: 10,
   },
+  subjectRow1: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
+  subjectName: { flex: 1, fontSize: 14.5, fontWeight: "500", color: COLORS.ink, lineHeight: 20, marginRight: 10 },
+  subjectPct: { fontFamily: SERIF, fontSize: 24, letterSpacing: -0.5, color: COLORS.ink },
+  subjectPctLow: { color: COLORS.primary },
+  subjectRow2: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 },
+  shortStats: { fontSize: 11.5, color: COLORS.muted },
+  shortStatsBold: { fontWeight: "600", color: COLORS.body },
+
+  footBand: { backgroundColor: COLORS.surfaceDark, borderRadius: 12, padding: 24, alignItems: "center", marginTop: 6, marginBottom: 8 },
+  footTitle: { fontFamily: SERIF, fontSize: 21, letterSpacing: -0.3, color: COLORS.onDark, marginTop: 10 },
+  footSub: { fontSize: 12.5, lineHeight: 19, color: COLORS.onDarkSoft, marginTop: 8, textAlign: "center" },
+  btnCoral: { backgroundColor: COLORS.primary, borderRadius: 8, paddingVertical: 12, paddingHorizontal: 20, marginTop: 14, alignSelf: "stretch", alignItems: "center" },
+  btnCoralText: { fontSize: 14, fontWeight: "500", color: COLORS.onDark },
+  footCredit: { fontSize: 11.5, color: COLORS.mutedSoft, marginTop: 14 },
+  footCreditName: { fontFamily: SERIF, fontStyle: "italic", fontSize: 13, color: COLORS.primary },
+
+  /* Modal */
+  modalBackdrop: { flex: 1, backgroundColor: COLORS.overlay, justifyContent: "flex-end" },
   modalSheet: {
-    backgroundColor: COLORS.white,
-    borderTopLeftRadius: 24,
-    borderTopRightRadius: 24,
-    padding: 20,
-    maxHeight: "80%",
+    backgroundColor: COLORS.canvas, borderTopLeftRadius: 16, borderTopRightRadius: 16,
+    paddingHorizontal: 20, paddingTop: 10, paddingBottom: 26, maxHeight: "78%",
   },
-  modalHeader: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    marginBottom: 16,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.trackBg,
-    paddingBottom: 12,
-  },
-  modalTitleContainer: { flex: 1, marginRight: 10 },
-  modalSubjectTitle: { fontSize: 16, fontWeight: "800", color: COLORS.ink },
-  modalSubjectSub: { fontSize: 12, color: COLORS.slate, marginTop: 2 },
-  modalCloseIcon: {
-    width: 32,
-    height: 32,
-    borderRadius: 16,
-    backgroundColor: COLORS.trackBg,
-    justifyContent: "center",
-    alignItems: "center",
-  },
-  closeIconText: { fontSize: 14, color: COLORS.slate, fontWeight: "700" },
-  logRow: {
-    flexDirection: "row",
-    justifyContent: "space-between",
-    alignItems: "center",
-    paddingVertical: 12,
-    borderBottomWidth: 1,
-    borderBottomColor: COLORS.bg,
-  },
-  logDate: { fontSize: 14, fontWeight: "700", color: COLORS.ink },
-  logTime: { fontSize: 12, color: COLORS.slate, marginTop: 2 },
-  logBadge: { paddingHorizontal: 12, paddingVertical: 4, borderRadius: 20 },
-  logBadgePresent: { backgroundColor: COLORS.chipSafeBg },
-  logBadgeAbsent: { backgroundColor: COLORS.chipDangerBg },
-  logBadgeUnknown: { backgroundColor: COLORS.trackBg },
-  logBadgeText: { fontSize: 12, fontWeight: "700" },
-  logTextPresent: { color: COLORS.successDark },
-  logTextAbsent: { color: COLORS.dangerDark },
-  logTextUnknown: { color: COLORS.slate },
+  modalHandle: { width: 36, height: 4, borderRadius: 2, backgroundColor: COLORS.creamStrong, alignSelf: "center", marginBottom: 14 },
+  modalHeader: { flexDirection: "row", alignItems: "flex-start", paddingBottom: 12, borderBottomWidth: 1, borderBottomColor: COLORS.hairlineSoft, marginBottom: 4 },
+  modalTitle: { fontFamily: SERIF, fontSize: 19, letterSpacing: -0.3, color: COLORS.ink, lineHeight: 24 },
+  modalSub: { fontSize: 12, color: COLORS.muted, marginTop: 4 },
+  logRow: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: COLORS.hairlineSoft },
+  logDate: { fontSize: 13, fontWeight: "500", color: COLORS.ink },
+  logTime: { fontSize: 11.5, color: COLORS.mutedSoft, marginTop: 2 },
+  logBadge: { backgroundColor: COLORS.surfaceCard, borderRadius: 9999, paddingHorizontal: 12, paddingVertical: 4 },
+  logBadgeText: { fontSize: 11, fontWeight: "500" },
 });
