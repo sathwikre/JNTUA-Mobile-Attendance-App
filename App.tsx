@@ -361,8 +361,15 @@ export default function Index() {
   const overallPercentage = overallPercentageVal.toFixed(1);
   const isShortage = overallPercentageVal < 75;
   const maxOverallSkippable = Math.max(0, Math.floor((4 * overallPresent - 3 * overallClasses) / 3));
+  const getAttendanceColor = (percentage: number): string => {
+    if (percentage < 75) return COLORS.error;
+    if (percentage <= 77) return COLORS.amber;
+    return COLORS.success;
+  };
   const calculateCanSkip = (p: number, t: number): number =>
     Math.min(Math.max(0, Math.floor((4 * p - 3 * t) / 3)), maxOverallSkippable);
+  const calculateClassesToReach75 = (p: number, t: number): number =>
+    Math.max(0, 3 * t - 4 * p);
 
   /* Persist latest result */
   useEffect(() => {
@@ -508,7 +515,7 @@ export default function Index() {
                       <Text style={styles.badgePillText}>{isShortage ? "Shortage" : "Semester 1"}</Text>
                     </View>
                   </View>
-                  <Text style={styles.bigPct}>
+                  <Text style={[styles.bigPct, { color: getAttendanceColor(overallPercentageVal) }]}>
                     {overallPercentage}
                     <Text style={styles.bigPctSign}>%</Text>
                   </Text>
@@ -564,6 +571,7 @@ export default function Index() {
               const pVal = parseFloat(item.percentage);
               const isLow = pVal < 75;
               const canSkip = calculateCanSkip(item.present, item.total);
+              const classesToReach75 = calculateClassesToReach75(item.present, item.total);
               return (
                 <TouchableOpacity
                   activeOpacity={0.8}
@@ -572,7 +580,7 @@ export default function Index() {
                 >
                   <View style={styles.subjectRow1}>
                     <Text style={styles.subjectName} numberOfLines={2}>{item.subjectName}</Text>
-                    <Text style={[styles.subjectPct, isLow && styles.subjectPctLow]}>{item.percentage}%</Text>
+                    <Text style={[styles.subjectPct, { color: getAttendanceColor(pVal) }]}>{item.percentage}%</Text>
                   </View>
                   <View style={styles.subjectRow2}>
                     <Text style={styles.shortStats}>
@@ -582,7 +590,11 @@ export default function Index() {
                     </Text>
                     <View style={[styles.badgeCoral, canSkip <= 0 && styles.badgeMute]}>
                       <Text style={[styles.badgeCoralText, canSkip <= 0 && styles.badgeMuteText]}>
-                        {canSkip > 0 ? `skip ${canSkip}` : "Shortage"}
+                        {isLow
+                          ? `Attend ${classesToReach75} more`
+                          : canSkip > 0
+                            ? `Skip ${canSkip} ${canSkip === 1 ? "class" : "classes"}`
+                            : "Keep attending"}
                       </Text>
                     </View>
                   </View>
@@ -771,7 +783,6 @@ const styles = StyleSheet.create({
   subjectRow1: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start" },
   subjectName: { flex: 1, fontSize: 14.5, fontWeight: "500", color: COLORS.ink, lineHeight: 20, marginRight: 10 },
   subjectPct: { fontFamily: SERIF, fontSize: 24, letterSpacing: -0.5, color: COLORS.ink },
-  subjectPctLow: { color: COLORS.primary },
   subjectRow2: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", marginTop: 12 },
   shortStats: { fontSize: 11.5, color: COLORS.muted },
   shortStatsBold: { fontWeight: "600", color: COLORS.body },
